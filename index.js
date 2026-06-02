@@ -189,10 +189,10 @@ function applyPresetScrollOptimization() {
     const style = document.createElement('style');
     style.id = PRESET_SCROLL_STYLE_ID;
     style.textContent = `
-${PRESET_PROMPT_MANAGER_LIST_SELECTOR} > * {
+${PRESET_PROMPT_MANAGER_LIST_SELECTOR} > li.completion_prompt_manager_prompt {
     content-visibility: auto;
     contain: layout paint style;
-    contain-intrinsic-size: 96px;
+    contain-intrinsic-block-size: auto 160px;
 }
 `;
     document.head.append(style);
