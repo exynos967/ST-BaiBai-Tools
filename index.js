@@ -33,10 +33,14 @@ const CHAT_DELETE_MESSAGE_DELETED_HANDLER_KEY = '__baiBaiToolkitChatDeleteMessag
 const CHAT_DELETE_GENERATION_ACTION_HANDLER_KEY = '__baiBaiToolkitChatDeleteGenerationActionHandler';
 const MOBILE_AUTO_KEYBOARD_HANDLER_KEY = '__baiBaiToolkitMobileAutoKeyboardHandler';
 const MOBILE_AUTO_KEYBOARD_FOCUS_PATCH_KEY = '__baiBaiToolkitMobileAutoKeyboardFocusPatched';
+const MOBILE_MESSAGE_EDIT_SCROLL_TOP_PATCH_KEY = '__baiBaiToolkitMessageEditScrollTopPatched';
 const CHAT_DELETE_EDIT_WINDOW_MS = 5000;
 const MOBILE_AUTO_KEYBOARD_DIRECT_FOCUS_WINDOW_MS = 1500;
+const MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_TOLERANCE = 2;
+const MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_DELAYS = [0, 50, 160];
 const CHAT_GENERATION_ACTION_SELECTOR = '#send_but, #option_regenerate, #option_continue, #option_impersonate, #mes_continue, #mes_impersonate';
 const CHAT_MESSAGE_EDIT_SELECTOR = '#chat .mes_edit';
+const MOBILE_MESSAGE_EDIT_SELECTOR = '#curEditTextarea, .reasoning_edit_textarea';
 const MOBILE_AUTO_KEYBOARD_TARGET_SELECTOR = '#curEditTextarea, #select_chat_search';
 const WORLD_INFO_DRAWER_HANDLER_KEY = '__baiBaiToolkitWorldInfoDrawerHandler';
 const WORLD_INFO_LAZY_SELECT2_PATCH_KEY = '__baiBaiToolkitWorldInfoLazySelect2Patched';
@@ -87,6 +91,7 @@ const defaultSettings = {
     chatListScrollOptimizationEnabled: true,
     chatListAutoClearEnabled: true,
     mobileAutoKeyboardSuppressionEnabled: true,
+    mobileMessageEditScrollGuardEnabled: true,
     presetScrollOptimizationEnabled: true,
     presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
@@ -489,6 +494,14 @@ async function renderSettingsPanel() {
             applyMobileAutoKeyboardSuppression();
         });
 
+    $('#bai_bai_toolkit_mobile_message_edit_scroll_guard_enabled')
+        .prop('checked', settings.mobileMessageEditScrollGuardEnabled)
+        .on('input', function () {
+            settings.mobileMessageEditScrollGuardEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+            applyMobileMessageEditScrollGuard();
+        });
+
     $('#bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled')
         .prop('checked', settings.chatDeleteEditFlowOptimizationEnabled)
         .on('input', function () {
@@ -616,6 +629,7 @@ function applyFeatureSettings() {
     applyPresetSaveOptimization();
     applyChatDeleteEditFlowOptimization();
     applyMobileAutoKeyboardSuppression();
+    applyMobileMessageEditScrollGuard();
 }
 
 function applyChatDeleteEditFlowOptimization() {
@@ -667,6 +681,310 @@ function applyMobileAutoKeyboardSuppression() {
     document.addEventListener('focusin', focusInHandler, true);
 }
 
+function applyMobileMessageEditScrollGuard() {
+    if (!isMobileMessageEditScrollGuardEnabled()) {
+        stopMobileMessageEditScrollGuard();
+        return;
+    }
+
+    patchMobileMessageEditChatScrollTop();
+    installMobileMessageEditScrollGuardObservers();
+    ensureMobileMessageEditChatResizeObserver();
+    captureMobileMessageEditScrollGuard('apply');
+}
+
+function patchMobileMessageEditChatScrollTop() {
+    const target = getMobileMessageEditScrollTopDescriptorTarget();
+
+    if (
+        !target?.descriptor?.get
+        || !target.descriptor?.set
+        || target.descriptor.set[MOBILE_MESSAGE_EDIT_SCROLL_TOP_PATCH_KEY]
+    ) {
+        return;
+    }
+
+    const { prototype, descriptor } = target;
+
+    function guardedScrollTopSetter(value) {
+        if (shouldBlockMobileMessageEditChatScrollTop(this, value)) {
+            return;
+        }
+
+        return descriptor.set.call(this, value);
+    }
+
+    guardedScrollTopSetter[MOBILE_MESSAGE_EDIT_SCROLL_TOP_PATCH_KEY] = true;
+    guardedScrollTopSetter.__baiBaiToolkitOriginalScrollTopSetter = descriptor.set;
+
+    Object.defineProperty(prototype, 'scrollTop', {
+        ...descriptor,
+        set: guardedScrollTopSetter,
+    });
+}
+
+function getMobileMessageEditScrollTopDescriptorTarget() {
+    const prototypes = [
+        globalThis.Element?.prototype,
+        globalThis.HTMLElement?.prototype,
+    ].filter(Boolean);
+
+    for (const prototype of prototypes) {
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'scrollTop');
+
+        if (descriptor?.get && descriptor?.set) {
+            return { prototype, descriptor };
+        }
+    }
+
+    return null;
+}
+
+function shouldBlockMobileMessageEditChatScrollTop(element, value) {
+    if (extensionState.mobileMessageEditScrollRestoreActive) {
+        return false;
+    }
+
+    if (!(element instanceof HTMLElement) || element.id !== 'chat') {
+        return false;
+    }
+
+    const guard = getActiveMobileMessageEditScrollGuard();
+
+    if (!guard || guard.chat !== element || Date.now() < Number(guard.userScrollIntentUntil || 0)) {
+        return false;
+    }
+
+    const nextScrollTop = Number(value);
+
+    if (!Number.isFinite(nextScrollTop)) {
+        return false;
+    }
+
+    return Math.abs(nextScrollTop - Number(guard.scrollTop || 0)) > MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_TOLERANCE;
+}
+
+function installMobileMessageEditScrollGuardObservers() {
+    if (extensionState.mobileMessageEditScrollGuardObserversInstalled) {
+        return;
+    }
+
+    const updateHandler = () => {
+        scheduleMobileMessageEditScrollGuardUpdate();
+    };
+    const resizeHandler = () => {
+        handleMobileMessageEditViewportResize();
+    };
+    const userScrollIntentHandler = () => {
+        handleMobileMessageEditUserScrollIntent();
+    };
+    const mutationObserver = new MutationObserver(updateHandler);
+
+    mutationObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+    });
+
+    document.addEventListener('focusin', updateHandler, true);
+    document.addEventListener('focusout', updateHandler, true);
+    document.addEventListener('touchmove', userScrollIntentHandler, { capture: true, passive: true });
+    document.addEventListener('wheel', userScrollIntentHandler, { capture: true, passive: true });
+    window.addEventListener('resize', resizeHandler, true);
+    window.visualViewport?.addEventListener('resize', resizeHandler, true);
+
+    extensionState.mobileMessageEditScrollGuardMutationObserver = mutationObserver;
+    extensionState.mobileMessageEditScrollGuardUpdateHandler = updateHandler;
+    extensionState.mobileMessageEditScrollGuardResizeHandler = resizeHandler;
+    extensionState.mobileMessageEditScrollGuardUserScrollIntentHandler = userScrollIntentHandler;
+    extensionState.mobileMessageEditScrollGuardObserversInstalled = true;
+}
+
+function ensureMobileMessageEditChatResizeObserver() {
+    const chat = document.querySelector('#chat');
+
+    if (!(chat instanceof HTMLElement) || typeof ResizeObserver !== 'function') {
+        return;
+    }
+
+    if (extensionState.mobileMessageEditScrollGuardResizeElement === chat) {
+        return;
+    }
+
+    extensionState.mobileMessageEditScrollGuardResizeObserver?.disconnect();
+
+    const resizeObserver = new ResizeObserver(() => {
+        handleMobileMessageEditChatResize();
+    });
+
+    resizeObserver.observe(chat);
+    extensionState.mobileMessageEditScrollGuardResizeObserver = resizeObserver;
+    extensionState.mobileMessageEditScrollGuardResizeElement = chat;
+}
+
+function scheduleMobileMessageEditScrollGuardUpdate() {
+    if (extensionState.mobileMessageEditScrollGuardUpdateFrame) {
+        return;
+    }
+
+    extensionState.mobileMessageEditScrollGuardUpdateFrame = requestAnimationFrame(() => {
+        extensionState.mobileMessageEditScrollGuardUpdateFrame = 0;
+        ensureMobileMessageEditChatResizeObserver();
+        captureMobileMessageEditScrollGuard('scheduled update');
+    });
+}
+
+function captureMobileMessageEditScrollGuard(reason, editor = null, { force = false } = {}) {
+    if (!isMobileMessageEditScrollGuardEnabled()) {
+        stopMobileMessageEditScrollGuard();
+        return;
+    }
+
+    const targetEditor = editor instanceof HTMLElement && editor.matches(MOBILE_MESSAGE_EDIT_SELECTOR)
+        ? editor
+        : document.querySelector(MOBILE_MESSAGE_EDIT_SELECTOR);
+    const chat = document.querySelector('#chat');
+
+    if (!(targetEditor instanceof HTMLElement) || !(chat instanceof HTMLElement)) {
+        stopMobileMessageEditScrollGuard();
+        return;
+    }
+
+    const existingGuard = extensionState.mobileMessageEditScrollGuard;
+
+    if (
+        !force
+        && existingGuard?.editor === targetEditor
+        && existingGuard?.chat === chat
+    ) {
+        return;
+    }
+
+    extensionState.mobileMessageEditScrollGuard = {
+        editor: targetEditor,
+        chat,
+        scrollTop: chat.scrollTop,
+        chatHeight: chat.offsetHeight,
+        capturedAt: Date.now(),
+        reason,
+        restoreTimers: [],
+        userScrollIntentUntil: 0,
+    };
+}
+
+function stopMobileMessageEditScrollGuard() {
+    const guard = extensionState.mobileMessageEditScrollGuard;
+
+    if (guard?.restoreTimers?.length) {
+        guard.restoreTimers.forEach(timer => clearTimeout(timer));
+    }
+
+    extensionState.mobileMessageEditScrollGuard = null;
+}
+
+function handleMobileMessageEditChatResize() {
+    const guard = getActiveMobileMessageEditScrollGuard();
+
+    if (!guard) {
+        captureMobileMessageEditScrollGuard('chat resize without guard');
+        return;
+    }
+
+    const nextHeight = guard.chat.offsetHeight;
+    const heightDelta = nextHeight - Number(guard.chatHeight || 0);
+    guard.chatHeight = nextHeight;
+
+    if (Math.abs(heightDelta) <= MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_TOLERANCE) {
+        return;
+    }
+
+    scheduleMobileMessageEditScrollRestore(`chat resize ${heightDelta}`);
+}
+
+function handleMobileMessageEditViewportResize() {
+    const guard = getActiveMobileMessageEditScrollGuard();
+
+    if (!guard) {
+        return;
+    }
+
+    scheduleMobileMessageEditScrollRestore('viewport resize');
+}
+
+function handleMobileMessageEditUserScrollIntent() {
+    const guard = getActiveMobileMessageEditScrollGuard();
+
+    if (!guard) {
+        return;
+    }
+
+    guard.userScrollIntentUntil = Date.now() + 700;
+}
+
+function scheduleMobileMessageEditScrollRestore(reason) {
+    const guard = getActiveMobileMessageEditScrollGuard();
+
+    if (!guard) {
+        return;
+    }
+
+    queueMicrotask(() => restoreMobileMessageEditScroll(reason));
+    requestAnimationFrame(() => restoreMobileMessageEditScroll(reason));
+
+    for (const delay of MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_DELAYS) {
+        const timer = setTimeout(() => {
+            guard.restoreTimers = guard.restoreTimers.filter(value => value !== timer);
+            restoreMobileMessageEditScroll(reason);
+        }, delay);
+
+        guard.restoreTimers.push(timer);
+    }
+}
+
+function restoreMobileMessageEditScroll(reason) {
+    const guard = getActiveMobileMessageEditScrollGuard();
+
+    if (!guard || Date.now() < Number(guard.userScrollIntentUntil || 0)) {
+        return;
+    }
+
+    const desiredScrollTop = Number(guard.scrollTop || 0);
+
+    if (Math.abs(guard.chat.scrollTop - desiredScrollTop) <= MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_TOLERANCE) {
+        return;
+    }
+
+    try {
+        extensionState.mobileMessageEditScrollRestoreActive = true;
+        guard.chat.scrollTop = desiredScrollTop;
+        console.debug(`${LOG_PREFIX} Restored message edit chat scroll after ${reason}: ${desiredScrollTop}`);
+    } finally {
+        extensionState.mobileMessageEditScrollRestoreActive = false;
+    }
+}
+
+function getActiveMobileMessageEditScrollGuard() {
+    const guard = extensionState.mobileMessageEditScrollGuard;
+
+    if (
+        !guard
+        || !isMobileMessageEditScrollGuardEnabled()
+        || !(guard.editor instanceof HTMLElement)
+        || !(guard.chat instanceof HTMLElement)
+        || !guard.editor.isConnected
+        || !guard.chat.isConnected
+        || !document.querySelector(MOBILE_MESSAGE_EDIT_SELECTOR)
+    ) {
+        stopMobileMessageEditScrollGuard();
+        return null;
+    }
+
+    return guard;
+}
+
+function isMobileMessageEditScrollGuardEnabled() {
+    return Boolean(settings.mobileMessageEditScrollGuardEnabled && isMobile());
+}
+
 function patchMobileAutoKeyboardFocus() {
     const originalFocus = HTMLElement.prototype.focus;
 
@@ -688,26 +1006,60 @@ function patchMobileAutoKeyboardFocus() {
 }
 
 function markMobileAutoKeyboardDirectFocusIntent(event) {
-    if (!settings.mobileAutoKeyboardSuppressionEnabled || !isMobile()) {
+    if (!isMobile()) {
         return;
     }
 
-    const target = event.target instanceof Element
+    const keyboardTarget = event.target instanceof Element
         ? event.target.closest(MOBILE_AUTO_KEYBOARD_TARGET_SELECTOR)
         : null;
+    const editTarget = event.target instanceof Element
+        ? event.target.closest(MOBILE_MESSAGE_EDIT_SELECTOR)
+        : null;
 
-    if (!(target instanceof HTMLElement)) {
+    if (isMobileMessageEditScrollGuardEnabled() && editTarget instanceof HTMLElement) {
+        captureMobileMessageEditScrollGuard('direct edit focus intent', editTarget, { force: true });
+    }
+
+    if (settings.mobileAutoKeyboardSuppressionEnabled && keyboardTarget instanceof HTMLElement) {
+        extensionState.mobileAutoKeyboardDirectFocusTarget = keyboardTarget;
+        extensionState.mobileAutoKeyboardDirectFocusAt = Date.now();
+    }
+
+    if (isMobileMessageEditScrollGuardEnabled() && editTarget instanceof HTMLElement) {
+        focusMobileMessageEditWithoutScroll(event, editTarget);
+    }
+}
+
+function focusMobileMessageEditWithoutScroll(event, editor) {
+    if (
+        document.activeElement === editor
+        || Date.now() - Number(extensionState.mobileMessageEditPreventScrollFocusAt || 0) <= 300
+    ) {
         return;
     }
 
-    extensionState.mobileAutoKeyboardDirectFocusTarget = target;
-    extensionState.mobileAutoKeyboardDirectFocusAt = Date.now();
+    extensionState.mobileMessageEditPreventScrollFocusAt = Date.now();
+
+    try {
+        editor.focus({ preventScroll: true });
+    } catch {
+        editor.focus();
+    }
 }
 
 function handleMobileAutoKeyboardFocusIn(event) {
     const target = event.target;
 
-    if (!(target instanceof HTMLElement) || !shouldSuppressMobileAutoKeyboardFocus(target)) {
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+
+    if (isMobileMessageEditScrollGuardEnabled() && target.matches(MOBILE_MESSAGE_EDIT_SELECTOR)) {
+        captureMobileMessageEditScrollGuard('edit focusin', target, { force: true });
+    }
+
+    if (!shouldSuppressMobileAutoKeyboardFocus(target)) {
         return;
     }
 

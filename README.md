@@ -12,7 +12,8 @@ What it does:
 - Speeds up prompt preset toggles and saves by updating only the affected prompt row immediately, then refreshing token counts after a short debounce instead of rebuilding the whole prompt list on every click
 - Optionally saves the current OpenAI preset after a prompt entry edit is saved; this switch is off by default
 - Allows the message editor to open immediately after deleting messages with SillyTavern's delete-message mode, and submits that fast-opened edit before replaying common generation actions
-- Prevents mobile auto-focus from opening the keyboard when entering message edit mode or opening the chat file manager, while preserving manual input focus
+- Prevents mobile auto-focus from opening the keyboard when entering message edit mode or opening the chat file manager while preserving manual input focus
+- Suppresses chat scroll compensation caused by mobile keyboard layout resize while editing messages
 - Adds a SillyTavern extension settings panel with separate switches for the responsiveness, chat file manager, and prompt preset features
 
 The chat file manager optimization only applies when:
