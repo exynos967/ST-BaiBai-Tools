@@ -1,4 +1,17 @@
-import { event_types, eventSource, getRequestHeaders, messageEdit, saveSettingsDebounced } from '../../../../script.js';
+import {
+    characters,
+    createOrEditCharacter,
+    event_types,
+    eventSource,
+    getCurrentChatId,
+    getRequestHeaders,
+    messageEdit,
+    openCharacterChat,
+    saveSettingsDebounced,
+    selectCharacterById,
+    setActiveCharacter,
+    this_chid,
+} from '../../../../script.js';
 import { AutoComplete } from '../../../autocomplete/AutoComplete.js';
 import { extension_settings, extensionTypes, renderExtensionTemplateAsync } from '../../../extensions.js';
 import { oai_settings, openai_setting_names, promptManager } from '../../../openai.js';
@@ -31,6 +44,7 @@ const PRESET_SAVE_HANDLER_KEY = '__baiBaiToolkitPresetSaveHandler';
 const CHAT_DELETE_EDIT_HANDLER_KEY = '__baiBaiToolkitChatDeleteEditHandler';
 const CHAT_DELETE_MESSAGE_DELETED_HANDLER_KEY = '__baiBaiToolkitChatDeleteMessageDeletedHandler';
 const CHAT_DELETE_GENERATION_ACTION_HANDLER_KEY = '__baiBaiToolkitChatDeleteGenerationActionHandler';
+const WELCOME_RECENT_CHAT_DIRECT_OPEN_HANDLER_KEY = '__baiBaiToolkitWelcomeRecentChatDirectOpenHandler';
 const MOBILE_AUTO_KEYBOARD_HANDLER_KEY = '__baiBaiToolkitMobileAutoKeyboardHandler';
 const MOBILE_AUTO_KEYBOARD_FOCUS_PATCH_KEY = '__baiBaiToolkitMobileAutoKeyboardFocusPatched';
 const MOBILE_MESSAGE_EDIT_SCROLL_TOP_PATCH_KEY = '__baiBaiToolkitMessageEditScrollTopPatched';
@@ -40,6 +54,8 @@ const MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_TOLERANCE = 2;
 const MOBILE_MESSAGE_EDIT_SCROLL_RESTORE_DELAYS = [0, 50, 160];
 const CHAT_GENERATION_ACTION_SELECTOR = '#send_but, #option_regenerate, #option_continue, #option_impersonate, #mes_continue, #mes_impersonate';
 const CHAT_MESSAGE_EDIT_SELECTOR = '#chat .mes_edit';
+const WELCOME_RECENT_CHAT_SELECTOR = '#chat .welcomePanel .recentChat';
+const WELCOME_RECENT_CHAT_ACTION_SELECTOR = '.renameChat, .deleteChat, .pinChat, button, a, input, select, textarea';
 const MOBILE_MESSAGE_EDIT_SELECTOR = '#curEditTextarea, .reasoning_edit_textarea';
 const MOBILE_AUTO_KEYBOARD_TARGET_SELECTOR = '#curEditTextarea, #select_chat_search';
 const WORLD_INFO_DRAWER_HANDLER_KEY = '__baiBaiToolkitWorldInfoDrawerHandler';
@@ -87,6 +103,7 @@ const defaultSettings = {
     textareaScrollOptimizationEnabled: true,
     worldInfoDrawerOptimizationEnabled: true,
     fastChatListEnabled: true,
+    welcomeRecentChatDirectOpenEnabled: true,
     saveRequestGzipEnabled: true,
     chatListScrollOptimizationEnabled: true,
     chatListAutoClearEnabled: true,
@@ -464,6 +481,14 @@ async function renderSettingsPanel() {
             saveExtensionSettings();
         });
 
+    $('#bai_bai_toolkit_welcome_recent_chat_direct_open_enabled')
+        .prop('checked', settings.welcomeRecentChatDirectOpenEnabled)
+        .on('input', function () {
+            settings.welcomeRecentChatDirectOpenEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+            applyWelcomeRecentChatDirectOpenOptimization();
+        });
+
     $('#bai_bai_toolkit_save_request_gzip_enabled')
         .prop('checked', settings.saveRequestGzipEnabled)
         .on('input', function () {
@@ -627,6 +652,7 @@ function applyFeatureSettings() {
     applyPresetSwitchOptimization();
     applyPresetToggleOptimization();
     applyPresetSaveOptimization();
+    applyWelcomeRecentChatDirectOpenOptimization();
     applyChatDeleteEditFlowOptimization();
     applyMobileAutoKeyboardSuppression();
     applyMobileMessageEditScrollGuard();
@@ -691,6 +717,115 @@ function applyMobileMessageEditScrollGuard() {
     installMobileMessageEditScrollGuardObservers();
     ensureMobileMessageEditChatResizeObserver();
     captureMobileMessageEditScrollGuard('apply');
+}
+
+function applyWelcomeRecentChatDirectOpenOptimization() {
+    if (extensionState[WELCOME_RECENT_CHAT_DIRECT_OPEN_HANDLER_KEY]) {
+        return;
+    }
+
+    const clickHandler = (event) => {
+        handleWelcomeRecentChatDirectOpenClick(event);
+    };
+
+    extensionState[WELCOME_RECENT_CHAT_DIRECT_OPEN_HANDLER_KEY] = clickHandler;
+    document.addEventListener('click', clickHandler, true);
+}
+
+function handleWelcomeRecentChatDirectOpenClick(event) {
+    if (!settings.welcomeRecentChatDirectOpenEnabled) {
+        return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest(WELCOME_RECENT_CHAT_ACTION_SELECTOR)) {
+        return;
+    }
+
+    const item = target.closest(WELCOME_RECENT_CHAT_SELECTOR);
+    if (!(item instanceof HTMLElement)) {
+        return;
+    }
+
+    const avatarId = item.getAttribute('data-avatar');
+    const groupId = item.getAttribute('data-group');
+    const fileName = item.getAttribute('data-file');
+
+    if (!avatarId || !fileName || groupId) {
+        return;
+    }
+
+    const characterId = characters.findIndex(character => character?.avatar === avatarId);
+    if (characterId === -1) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if (extensionState.welcomeRecentChatDirectOpenPromise) {
+        return;
+    }
+
+    extensionState.welcomeRecentChatDirectOpenPromise = openWelcomeRecentCharacterChatDirectly(characterId, avatarId, fileName)
+        .finally(() => {
+            extensionState.welcomeRecentChatDirectOpenPromise = null;
+        });
+}
+
+async function openWelcomeRecentCharacterChatDirectly(characterId, avatarId, fileName) {
+    const character = characters[characterId];
+    if (!character) {
+        console.error(`${LOG_PREFIX} Character not found for avatar ID: ${avatarId}`);
+        return;
+    }
+
+    try {
+        if (String(this_chid) === String(characterId)) {
+            setActiveCharacter(avatarId);
+            saveSettingsDebounced();
+
+            if (isWelcomeRecentChatAlreadyDisplayed(fileName)) {
+                console.debug(`${LOG_PREFIX} Chat ${fileName} is already open.`);
+                return;
+            }
+
+            await openCharacterChat(fileName);
+            return;
+        }
+
+        const previousChat = character.chat;
+        character.chat = fileName;
+
+        await selectCharacterById(characterId);
+
+        if (String(this_chid) !== String(characterId)) {
+            if (character.chat === fileName && previousChat !== fileName) {
+                character.chat = previousChat;
+            }
+            return;
+        }
+
+        setActiveCharacter(avatarId);
+        saveSettingsDebounced();
+
+        if (getCurrentChatId() !== fileName) {
+            await openCharacterChat(fileName);
+            return;
+        }
+
+        if (previousChat !== fileName) {
+            await createOrEditCharacter(new CustomEvent('newChat'));
+        }
+    } catch (error) {
+        console.error(`${LOG_PREFIX} Error opening recent chat`, error);
+        toastr.error(t`Failed to open recent chat. See console for details.`);
+    }
+}
+
+function isWelcomeRecentChatAlreadyDisplayed(fileName) {
+    return getCurrentChatId() === fileName && !document.querySelector('#chat .welcomePanel');
 }
 
 function patchMobileMessageEditChatScrollTop() {
