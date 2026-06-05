@@ -81,6 +81,7 @@ const PRESET_DRAG_CANCEL_DISTANCE_PX = 12;
 const PRESET_DRAG_CLICK_SUPPRESS_MS = 500;
 const CHAT_GENERATION_ACTION_SELECTOR = '#send_but, #option_regenerate, #option_continue, #option_impersonate, #mes_continue, #mes_impersonate';
 const CHAT_MESSAGE_EDIT_SELECTOR = '#chat .mes_edit';
+const WELCOME_PANEL_SELECTOR = '#chat .welcomePanel';
 const WELCOME_RECENT_CHAT_SELECTOR = '#chat .welcomePanel .recentChat';
 const WELCOME_RECENT_CHAT_ACTION_SELECTOR = '.renameChat, .deleteChat, .pinChat, button, a, input, select, textarea';
 const MOBILE_MESSAGE_EDIT_SELECTOR = '#curEditTextarea, .reasoning_edit_textarea';
@@ -2322,6 +2323,16 @@ function refreshLongChatDomRenderOptimization({ reason = '' } = {}) {
         return;
     }
 
+    const chatElement = document.querySelector('#chat');
+    if (!(chatElement instanceof HTMLElement)) {
+        return;
+    }
+
+    if (isWelcomePageDisplayed(chatElement)) {
+        cleanupLongChatDomRenderMessages();
+        return;
+    }
+
     const startedAt = performance.now();
     const refreshStats = {
         reason,
@@ -2335,11 +2346,6 @@ function refreshLongChatDomRenderOptimization({ reason = '' } = {}) {
     };
 
     ensureLongChatDomRenderObservers();
-
-    const chatElement = document.querySelector('#chat');
-    if (!(chatElement instanceof HTMLElement)) {
-        return;
-    }
 
     const messages = [...chatElement.querySelectorAll('.mes')].filter(element => element instanceof HTMLElement);
     const chat = Array.isArray(scriptModule.chat) ? scriptModule.chat : [];
@@ -2534,6 +2540,7 @@ function settleLongChatDomRenderScrollToBottom(token, reason = '') {
     if (!(chat instanceof HTMLElement)
         || token !== state.autoScrollToken
         || !settings.longChatDomRenderOptimizationEnabled
+        || isWelcomePageDisplayed(chat)
         || state.userScrolledAway) {
         restoreLongChatDomRenderScrollBehavior(state);
         return;
@@ -4088,7 +4095,15 @@ async function openWelcomeRecentCharacterChatDirectly(characterId, avatarId, fil
 }
 
 function isWelcomeRecentChatAlreadyDisplayed(fileName) {
-    return getCurrentChatId() === fileName && !document.querySelector('#chat .welcomePanel');
+    return getCurrentChatId() === fileName && !isWelcomePageDisplayed();
+}
+
+function isWelcomePageDisplayed(root = document) {
+    if (!(root instanceof Document || root instanceof Element)) {
+        return false;
+    }
+
+    return Boolean(root.querySelector(WELCOME_PANEL_SELECTOR));
 }
 
 function patchMobileMessageEditChatScrollTop() {
