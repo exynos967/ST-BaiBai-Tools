@@ -2549,7 +2549,7 @@ function getLongChatDomRenderEditingMessages(chatElement) {
 function estimateLongChatDomRenderMessageHeight(chars, width = window.innerWidth) {
     const charsPerLine = Math.max(22, Math.min(80, Math.floor((width || 720) / 16)));
     const lines = Math.max(1, Math.ceil(Number(chars || 0) / charsPerLine));
-    const estimated = 160 + (lines * 28);
+    const estimated = 230 + (lines * 28);
 
     return Math.max(120, Math.min(12000, estimated));
 }
