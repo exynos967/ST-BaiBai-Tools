@@ -2547,9 +2547,9 @@ function getLongChatDomRenderEditingMessages(chatElement) {
 }
 
 function estimateLongChatDomRenderMessageHeight(chars, width = window.innerWidth) {
-    const charsPerLine = Math.max(22, Math.min(80, Math.floor((width || 720) / 14)));
+    const charsPerLine = Math.max(22, Math.min(80, Math.floor((width || 720) / 16)));
     const lines = Math.max(1, Math.ceil(Number(chars || 0) / charsPerLine));
-    const estimated = 140 + (lines * 23);
+    const estimated = 160 + (lines * 28);
 
     return Math.max(120, Math.min(12000, estimated));
 }
@@ -2900,10 +2900,30 @@ function getLongChatMessageTextLength(message) {
         return 0;
     }
 
-    let length = typeof message.mes === 'string' ? message.mes.length : 0;
-    length += typeof message.extra?.reasoning === 'string' ? message.extra.reasoning.length : 0;
-    length += typeof message.extra?.display_text === 'string' ? message.extra.display_text.length : 0;
-    length += typeof message.extra?.reasoning_display_text === 'string' ? message.extra.reasoning_display_text.length : 0;
+    let rawText = '';
+
+    // Prefer translated text if available, fallback to original message
+    if (typeof message.extra?.display_text === 'string' && message.extra.display_text.trim().length > 0) {
+        rawText = message.extra.display_text;
+    } else if (typeof message.mes === 'string') {
+        rawText = message.mes;
+    }
+
+    let length = 0;
+    if (rawText) {
+        // Strip <think> and <details> blocks out of the length calculation
+        // since they are usually folded/hidden and don't contribute to standard reading height
+        let processedText = rawText
+            .replace(/<think[ing]*>[\s\S]*?<\/think[ing]*>/gi, '')
+            .replace(/<details[\s\S]*?>[\s\S]*?<\/details>/gi, '');
+
+        length += processedText.length;
+    }
+
+    // Add a fixed small length penalty if reasoning text exists (representing folded summary)
+    if (typeof message.extra?.reasoning === 'string' || typeof message.extra?.reasoning_display_text === 'string') {
+        length += 50;
+    }
 
     return length;
 }
