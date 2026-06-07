@@ -3875,8 +3875,8 @@ function buildRegexVueListModel(scriptType) {
 
     const ungrouped = {
         id: REGEX_UNGROUPED_GROUP_ID,
-        name: t`Ungrouped`,
-        collapsed: false,
+        name: groupState.ungrouped?.name || t`Ungrouped`,
+        collapsed: Boolean(groupState.ungrouped?.collapsed),
         isUngrouped: true,
         scripts: [],
     };
@@ -4055,7 +4055,7 @@ function renderRegexVueGroupHeader(h, list, group) {
         }),
         h('strong', { class: 'bai-bai-regex-group-name flex1 overflow-hidden', title: group.name }, group.name),
         h('small', { class: 'bai-bai-regex-group-count' }, String(group.scripts.length)),
-        !group.isUngrouped && h('div', {
+        h('div', {
             class: 'menu_button fa-solid fa-pencil',
             title: t`Rename group`,
             onClick: () => void renameRegexVueGroup(list.scriptType, group.id),
@@ -4563,6 +4563,10 @@ function getRegexGroupStateForScriptType(scriptType) {
         state.scripts = {};
     }
 
+    if (!state.ungrouped || typeof state.ungrouped !== 'object') {
+        state.ungrouped = {};
+    }
+
     return state;
 }
 
@@ -4579,6 +4583,15 @@ function normalizeRegexGroupState(groupState) {
         })
         .sort((a, b) => a.order - b.order)
         .map((group, index) => ({ ...group, order: index }));
+
+    if (!groupState.ungrouped || typeof groupState.ungrouped !== 'object') {
+        groupState.ungrouped = {};
+    }
+
+    groupState.ungrouped = {
+        name: String(groupState.ungrouped.name || t`Ungrouped`),
+        collapsed: Boolean(groupState.ungrouped.collapsed),
+    };
 }
 
 function saveRegexGroupSettings() {
@@ -4617,7 +4630,9 @@ async function createRegexVueGroup(scriptType) {
 
 async function renameRegexVueGroup(scriptType, groupId) {
     const groupState = getRegexGroupStateForScriptType(scriptType);
-    const group = groupState.groups.find(item => item.id === groupId);
+    const group = groupId === REGEX_UNGROUPED_GROUP_ID
+        ? groupState.ungrouped
+        : groupState.groups.find(item => item.id === groupId);
 
     if (!group) {
         return;
@@ -4665,12 +4680,10 @@ async function deleteRegexVueGroup(scriptType, groupId) {
 }
 
 function toggleRegexVueGroupCollapsed(scriptType, groupId) {
-    if (groupId === REGEX_UNGROUPED_GROUP_ID) {
-        return;
-    }
-
     const groupState = getRegexGroupStateForScriptType(scriptType);
-    const group = groupState.groups.find(item => item.id === groupId);
+    const group = groupId === REGEX_UNGROUPED_GROUP_ID
+        ? groupState.ungrouped
+        : groupState.groups.find(item => item.id === groupId);
 
     if (!group) {
         return;
