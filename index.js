@@ -22,7 +22,7 @@ import * as presetOptimizations from './presetOptimizations.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.22.0';
+const CURRENT_VERSION = '0.22.1';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -172,6 +172,7 @@ const defaultSettings = {
     presetAutoSaveAfterPromptEditEnabled: false,
     regexQuickOperationOptimizationEnabled: true,
     chatDeleteEditFlowOptimizationEnabled: true,
+    messageDoubleClickEditEnabled: false,
     messageTripleClickEditEnabled: true,
 };
 const legacySettingsKeys = [
@@ -262,10 +263,21 @@ function initializeSettings() {
     }
 
     Object.assign(settings, defaultSettings, extension_settings[SETTINGS_KEY]);
+    const normalizedMessageEditClickSetting = normalizeMessageEditClickSettings();
 
-    if (removedLegacySetting) {
+    if (removedLegacySetting || normalizedMessageEditClickSetting) {
         saveSettingsDebounced();
     }
+}
+
+function normalizeMessageEditClickSettings() {
+    if (settings.messageDoubleClickEditEnabled && settings.messageTripleClickEditEnabled) {
+        settings.messageDoubleClickEditEnabled = false;
+        extension_settings[SETTINGS_KEY].messageDoubleClickEditEnabled = false;
+        return true;
+    }
+
+    return false;
 }
 
 function saveExtensionSettings() {

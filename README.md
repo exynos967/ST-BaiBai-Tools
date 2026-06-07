@@ -2,7 +2,7 @@
 
 This extension packages a small set of SillyTavern responsiveness fixes as a third-party extension.
 
-Current version: `0.22.0`
+Current version: `0.22.1`
 
 What it does:
 
@@ -19,7 +19,7 @@ What it does:
 - Speeds up existing regex script toggles, edits, deletes, and drag sorting by updating the affected regex row or order without rebuilding all regex lists
 - Adds a `预设内容 CodeMirror 编辑器` switch that replaces the OpenAI prompt entry content textarea, including SillyTavern's expanded editor, while keeping the original form fields synchronized for saves
 - Optionally saves the current OpenAI preset after a prompt entry edit is saved; this switch is off by default
-- Allows double or triple clicking on a message text bubble to quickly open the message editor for that message floor
+- Allows either double or triple clicking on a message text bubble to quickly open the message editor for that message floor
 - Allows the message editor to open immediately after deleting messages with SillyTavern's delete-message mode, and submits that fast-opened edit before replaying common generation actions
 - Prevents mobile auto-focus from opening the keyboard when entering message edit mode, opening the chat file manager, entering a character chat, or when SillyTavern automatically refocuses the chat input while preserving manual input focus
 - Suppresses chat scroll compensation caused by mobile keyboard layout resize while editing messages
