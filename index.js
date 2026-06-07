@@ -4118,6 +4118,12 @@ function renderRegexVueGroupHeader(h, list, group) {
     const scriptCount = group.scripts.length;
     const enabledCount = group.scripts.filter(script => !Boolean(script?.disabled ?? false)).length;
     const allDisabled = scriptCount > 0 && enabledCount === 0;
+    const realGroupIds = list.groups
+        .filter(item => !item.isUngrouped && !item.isPendingAssignment)
+        .map(item => item.id);
+    const groupIndex = realGroupIds.indexOf(group.id);
+    const canMoveGroupUp = groupIndex > 0;
+    const canMoveGroupDown = groupIndex >= 0 && groupIndex < realGroupIds.length - 1;
 
     return h('div', {
         class: ['bai-bai-regex-group-header', 'flex-container', 'flexnowrap', group.collapsed ? 'collapsed' : ''],
@@ -4169,6 +4175,24 @@ function renderRegexVueGroupHeader(h, list, group) {
                 },
             }),
         ]),
+        !group.isUngrouped && h('div', {
+            class: ['menu_button', 'bai-bai-regex-group-move-btn', 'fa-solid', 'fa-arrow-up', canMoveGroupUp ? '' : 'disabled'],
+            title: canMoveGroupUp ? t`Move group up` : t`Already first group`,
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                moveRegexVueGroup(list.scriptType, group.id, -1);
+            },
+        }),
+        !group.isUngrouped && h('div', {
+            class: ['menu_button', 'bai-bai-regex-group-move-btn', 'fa-solid', 'fa-arrow-down', canMoveGroupDown ? '' : 'disabled'],
+            title: canMoveGroupDown ? t`Move group down` : t`Already last group`,
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                moveRegexVueGroup(list.scriptType, group.id, 1);
+            },
+        }),
         h('div', {
             class: 'menu_button fa-solid fa-pencil',
             title: t`Rename group`,
@@ -4581,6 +4605,15 @@ function installRegexVueManagerStyle() {
     opacity: 0.75;
 }
 
+.bai-bai-regex-group-move-btn {
+    flex: 0 0 auto;
+}
+
+.bai-bai-regex-vue-list .bai-bai-regex-group-move-btn.disabled {
+    cursor: default !important;
+    opacity: 0.35;
+}
+
 .bai-bai-regex-group-header.collapsed .bai-bai-regex-group-toggle {
     transform: rotate(-90deg);
 }
@@ -4786,6 +4819,38 @@ async function renameRegexVueGroup(scriptType, groupId) {
     }
 
     group.name = trimmedName;
+    saveRegexGroupSettings();
+    syncRegexVueManagerState();
+}
+
+function moveRegexVueGroup(scriptType, groupId, direction) {
+    if (groupId === REGEX_UNGROUPED_GROUP_ID || groupId === REGEX_PENDING_ASSIGNMENT_GROUP_ID) {
+        return;
+    }
+
+    const offset = Math.sign(Number(direction));
+
+    if (offset === 0) {
+        return;
+    }
+
+    const groupState = getRegexGroupStateForScriptType(scriptType);
+    normalizeRegexGroupState(groupState);
+
+    const currentIndex = groupState.groups.findIndex(group => group.id === groupId);
+    const targetIndex = currentIndex + offset;
+
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= groupState.groups.length) {
+        return;
+    }
+
+    const [group] = groupState.groups.splice(currentIndex, 1);
+    groupState.groups.splice(targetIndex, 0, group);
+    groupState.groups = groupState.groups.map((item, index) => ({
+        ...item,
+        order: index,
+    }));
+
     saveRegexGroupSettings();
     syncRegexVueManagerState();
 }
