@@ -1,0 +1,6 @@
+{
+  "package": "vue-draggable-next",
+  "version": "2.3.0",
+  "source": ".codex-codemirror-build/node_modules/vue-draggable-next/dist/vue-draggable-next.esm-bundler.js",
+  "output": "vendor/vue-draggable-next.esm-browser.prod.js"
+}

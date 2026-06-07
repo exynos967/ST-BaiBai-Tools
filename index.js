@@ -4,6 +4,7 @@ import {
     eventSource,
     getCurrentChatId,
     getRequestHeaders,
+    reloadCurrentChat,
     saveSettingsDebounced,
     this_chid,
 } from '../../../../script.js';
@@ -43,6 +44,7 @@ const REGEX_VUE_MANAGER_CLICK_HANDLER_KEY = '__baiBaiToolkitRegexVueManagerClick
 const REGEX_VUE_MANAGER_ROOT_ID = 'bai_bai_toolkit_regex_vue_manager_root';
 const REGEX_VUE_MANAGER_STYLE_ID = 'bai_bai_toolkit_regex_vue_manager_style';
 const REGEX_VUE_MANAGER_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
+const REGEX_VUE_DRAGGABLE_MODULE_PATH = './vendor/vue-draggable-next.esm-browser.prod.js';
 const REGEX_UNGROUPED_GROUP_ID = '__ungrouped';
 const DESCRIPTION_EDITOR_SOURCE_SELECTOR = '#description_textarea';
 const DESCRIPTION_EDITOR_SOURCE_HIDDEN_CLASS = 'bai-bai-toolkit-description-source-hidden';
@@ -3280,8 +3282,8 @@ function installRegexQuickOperationOptimization() {
     installRegexQuickOperationMutationObserver();
     installOptimizedRegexImportHandler();
     installRegexVueManagerActionHandler();
+    scheduleNativeRegexSortableGuard();
     void installRegexVueManager();
-    scheduleRegexSortablePatch();
 }
 
 function removeRegexQuickOperationOptimization() {
@@ -3300,11 +3302,10 @@ function removeRegexQuickOperationOptimization() {
     }
 
     const state = getRegexQuickOperationState();
-    clearTimeout(state.sortablePatchTimer);
-    state.sortablePatchTimer = null;
-    state.sortablePatchRetries = 0;
+    clearTimeout(state.nativeSortableGuardTimer);
+    state.nativeSortableGuardTimer = null;
+    state.nativeSortableGuardRetries = 0;
     state.scriptTemplate = null;
-    restoreRegexSortableStops(state);
     removeOptimizedRegexImportHandler();
     removeRegexVueManagerActionHandler();
     removeRegexVueManager();
@@ -3317,8 +3318,8 @@ function getRegexQuickOperationState() {
 
     const state = extensionState.regexQuickOperationOptimization;
 
-    if (!(state.sortableOriginalStops instanceof Map)) {
-        state.sortableOriginalStops = new Map();
+    if (!(state.scriptTemplate instanceof DocumentFragment)) {
+        state.scriptTemplate = null;
     }
 
     return state;
@@ -3331,7 +3332,7 @@ function installRegexQuickOperationMutationObserver() {
 
     const target = document.querySelector(REGEX_CONTAINER_SELECTOR) ?? document.body;
     const observer = new MutationObserver(() => {
-        scheduleRegexSortablePatch();
+        scheduleNativeRegexSortableGuard();
         scheduleRegexVueManagerSync();
     });
 
@@ -3459,20 +3460,22 @@ async function installRegexVueManager() {
             }
 
             syncRegexVueManagerState();
-            await refreshRegexVueManagerSortables();
+            scheduleNativeRegexSortableGuard(250);
             return;
         }
 
         const vue = await loadRegexVueModule();
+        const vueDraggableNext = await loadRegexVueDraggableModule();
         manager.vue = vue;
+        manager.vueDraggableNext = vueDraggableNext;
         manager.root = ensureRegexVueManagerRoot();
         manager.state = vue.reactive(createRegexVueManagerModel());
-        manager.app = vue.createApp(createRegexVueManagerRootComponent(vue, manager.state));
+        manager.app = vue.createApp(createRegexVueManagerRootComponent(vue, vueDraggableNext, manager.state));
 
         clearRegexVueManagerTargets();
         manager.app.mount(manager.root);
         syncRegexVueManagerState();
-        await refreshRegexVueManagerSortables();
+        scheduleNativeRegexSortableGuard(250);
         updateRegexBulkControls();
     })();
 
@@ -3481,6 +3484,10 @@ async function installRegexVueManager() {
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to install regex Vue manager`, error);
         toastr.error(t`Failed to install regex list manager. See console for details.`);
+
+        if (!manager.app) {
+            enableNativeRegexSortables();
+        }
     } finally {
         manager.installing = null;
     }
@@ -3491,7 +3498,7 @@ function removeRegexVueManager() {
 
     clearTimeout(manager.syncTimer);
     manager.syncTimer = null;
-    destroyRegexVueManagerSortables();
+    setRegexVueDragCursorActive(false);
 
     if (manager.app) {
         try {
@@ -3507,8 +3514,9 @@ function removeRegexVueManager() {
     manager.root = null;
     manager.installing = null;
     document.getElementById(REGEX_VUE_MANAGER_STYLE_ID)?.remove();
-    enableNativeRegexSortables();
-    void restoreRegexRowsAfterVueManagerRemove();
+    void restoreRegexRowsAfterVueManagerRemove().finally(() => {
+        enableNativeRegexSortables();
+    });
 }
 
 function getRegexVueManagerState() {
@@ -3523,7 +3531,6 @@ function getRegexVueManagerState() {
             modulePromise: null,
             installing: null,
             syncTimer: null,
-            sortableInstances: [],
             suppressObserver: false,
         };
     }
@@ -3575,6 +3582,16 @@ async function loadRegexVueModule() {
     }
 
     return manager.modulePromise;
+}
+
+async function loadRegexVueDraggableModule() {
+    const manager = getRegexVueManagerState();
+
+    if (!manager.draggableModulePromise) {
+        manager.draggableModulePromise = import(new URL(REGEX_VUE_DRAGGABLE_MODULE_PATH, import.meta.url).href);
+    }
+
+    return manager.draggableModulePromise;
 }
 
 function ensureRegexVueManagerRoot() {
@@ -3648,14 +3665,12 @@ function syncRegexVueManagerState() {
     manager.state.lists.scoped = buildRegexVueListModel(REGEX_SCRIPT_TYPES.SCOPED);
     pruneRegexVueSelection();
     manager.state.renderKey += 1;
-    void refreshRegexVueManagerSortables();
     updateRegexBulkControls();
 }
 
 async function syncRegexVueManagerAfterDataChange() {
     if (isRegexVueManagerActive()) {
         syncRegexVueManagerState();
-        await refreshRegexVueManagerSortables();
     }
 }
 
@@ -3715,28 +3730,28 @@ function buildRegexVueListModel(scriptType) {
     };
 }
 
-function createRegexVueManagerRootComponent(vue, model) {
+function createRegexVueManagerRootComponent(vue, vueDraggableNext, model) {
     const { h, Teleport, Fragment } = vue;
 
     return {
         name: 'BaiBaiRegexManagerRoot',
         render() {
             return h(Fragment, null, [
-                renderRegexVueTeleport(h, Teleport, model, 'global', '#saved_regex_scripts'),
-                renderRegexVueTeleport(h, Teleport, model, 'preset', '#saved_preset_scripts'),
-                renderRegexVueTeleport(h, Teleport, model, 'scoped', '#saved_scoped_scripts'),
+                renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, 'global', '#saved_regex_scripts'),
+                renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, 'preset', '#saved_preset_scripts'),
+                renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, 'scoped', '#saved_scoped_scripts'),
             ]);
         },
     };
 }
 
-function renderRegexVueTeleport(h, Teleport, model, typeKey, selector) {
+function renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, typeKey, selector) {
     return h(Teleport, { to: selector }, [
-        renderRegexVueList(h, model, typeKey),
+        renderRegexVueList(h, vueDraggableNext, model, typeKey),
     ]);
 }
 
-function renderRegexVueList(h, model, typeKey) {
+function renderRegexVueList(h, vueDraggableNext, model, typeKey) {
     const list = model.lists[typeKey];
     const hasRealGroups = list.groups.some(group => !group.isUngrouped);
     const scriptCount = list.groups.reduce((count, group) => count + group.scripts.length, 0);
@@ -3745,10 +3760,10 @@ function renderRegexVueList(h, model, typeKey) {
     ];
 
     if (scriptCount === 0) {
-        children.push(h('div', { class: 'bai-bai-regex-empty-list' }, t`No scripts found`));
+        children.push(h('div', { class: 'bai-bai-regex-empty-list', key: 'empty' }, t`No scripts found`));
     }
 
-    for (const group of list.groups) {
+    const groupChildren = list.groups.map(group => {
         const groupChildren = [];
 
         if (!group.isUngrouped || hasRealGroups) {
@@ -3756,19 +3771,46 @@ function renderRegexVueList(h, model, typeKey) {
         }
 
         if (!group.collapsed) {
-            const rows = group.scripts.map(script => renderRegexVueScriptRow(h, model, list, script));
-            groupChildren.push(h('div', {
+            const rowRender = () => group.scripts.map(script => renderRegexVueScriptRow(h, model, list, script));
+            groupChildren.push(h(vueDraggableNext.VueDraggableNext, {
                 class: 'bai-bai-regex-group-body flex-container flexFlowColumn',
                 'data-regex-type': list.typeKey,
                 'data-regex-group-id': group.id,
-            }, rows));
+                list: group.scripts,
+                group: { name: `bai-bai-regex-scripts-${list.typeKey}`, pull: true, put: true },
+                draggable: '.regex-script-label',
+                handle: '.bai-bai-regex-script-drag-handle',
+                itemKey: 'id',
+                animation: 150,
+                forceFallback: true,
+                fallbackOnBody: true,
+                fallbackClass: 'bai-bai-regex-sortable-fallback',
+                ghostClass: 'bai-bai-regex-sortable-ghost',
+                chosenClass: 'bai-bai-regex-sortable-chosen',
+                dragClass: 'bai-bai-regex-sortable-drag',
+                move: event => isRegexVueScriptDragMoveAllowed(event, list.typeKey),
+                key: `body-${group.id}`,
+                onChoose: () => setRegexVueDragCursorActive(true),
+                onStart: () => setRegexVueDragCursorActive(true),
+                onUnchoose: () => setRegexVueDragCursorActive(false),
+                onEnd: () => {
+                    setRegexVueDragCursorActive(false);
+                    saveRegexScriptsOrderFromModelSafely(list.typeKey);
+                },
+            }, { default: rowRender }));
         }
 
-        children.push(h('div', {
+        return h('div', {
             class: ['bai-bai-regex-group', group.isUngrouped ? 'bai-bai-regex-group-ungrouped' : ''],
             'data-regex-group-id': group.id,
-        }, groupChildren));
-    }
+            key: group.id,
+        }, groupChildren);
+    });
+
+    children.push(h('div', {
+        class: 'bai-bai-regex-groups flex-container flexFlowColumn',
+        key: 'groups',
+    }, groupChildren));
 
     return h('div', {
         class: 'bai-bai-regex-vue-list flex-container flexFlowColumn',
@@ -3778,7 +3820,7 @@ function renderRegexVueList(h, model, typeKey) {
 }
 
 function renderRegexVueListToolbar(h, list) {
-    return h('div', { class: 'bai-bai-regex-list-toolbar flex-container' }, [
+    return h('div', { class: 'bai-bai-regex-list-toolbar flex-container', key: 'toolbar' }, [
         h('div', {
             class: 'menu_button menu_button_icon',
             title: t`Create regex group`,
@@ -3791,7 +3833,7 @@ function renderRegexVueListToolbar(h, list) {
 }
 
 function renderRegexVueGroupHeader(h, list, group) {
-    return h('div', { class: 'bai-bai-regex-group-header flex-container flexnowrap' }, [
+    return h('div', { class: 'bai-bai-regex-group-header flex-container flexnowrap', key: `header-${group.id}` }, [
         h('span', {
             class: ['bai-bai-regex-group-toggle fa-solid', group.collapsed ? 'fa-chevron-right' : 'fa-chevron-down'],
             title: group.collapsed ? t`Expand` : t`Collapse`,
@@ -3817,6 +3859,7 @@ function renderRegexVueScriptRow(h, model, list, script) {
 
     return h('div', {
         id: script.id,
+        key: script.id,
         class: 'regex-script-label flex-container flexnowrap',
         'data-regex-script-id': script.id,
         'data-regex-type': list.typeKey,
@@ -3827,7 +3870,7 @@ function renderRegexVueScriptRow(h, model, list, script) {
             checked,
             onChange: event => setRegexVueScriptSelected(script.id, Boolean(event.target?.checked)),
         }),
-        h('span', { class: 'drag-handle menu-handle' }, '\u2630'),
+        h('span', { class: 'drag-handle menu-handle bai-bai-regex-script-drag-handle' }, '\u2630'),
         h('div', {
             class: 'regex_script_name flex1 overflow-hidden',
             title: script.scriptName || '',
@@ -3900,6 +3943,31 @@ function renderRegexVueScriptRow(h, model, list, script) {
     ]);
 }
 
+function isRegexVueScriptDragMoveAllowed(event, typeKey) {
+    const scriptType = getRegexScriptTypeFromKey(typeKey);
+    const draggedScript = event?.draggedContext?.element;
+    const to = event?.to;
+    const from = event?.from;
+
+    if (scriptType === null || !draggedScript?.id || !(to instanceof HTMLElement) || !(from instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (!to.matches('.bai-bai-regex-group-body') || !from.matches('.bai-bai-regex-group-body')) {
+        return false;
+    }
+
+    if (to.dataset.regexType !== typeKey || from.dataset.regexType !== typeKey) {
+        return false;
+    }
+
+    return getRegexScriptsByType(scriptType).some(script => script?.id === draggedScript.id);
+}
+
+function setRegexVueDragCursorActive(active) {
+    document.body?.classList.toggle('bai-bai-regex-drag-cursor-active', Boolean(active));
+}
+
 function installRegexVueManagerStyle() {
     if (document.getElementById(REGEX_VUE_MANAGER_STYLE_ID)) {
         return;
@@ -3909,6 +3977,10 @@ function installRegexVueManagerStyle() {
     style.id = REGEX_VUE_MANAGER_STYLE_ID;
     style.textContent = `
 .bai-bai-regex-vue-list {
+    gap: 2px;
+}
+
+.bai-bai-regex-groups {
     gap: 2px;
 }
 
@@ -3923,16 +3995,30 @@ function installRegexVueManagerStyle() {
     text-align: center;
 }
 
+#regex_container #saved_regex_scripts,
+#regex_container #saved_scoped_scripts,
+#regex_container #saved_preset_scripts,
+.bai-bai-regex-vue-list,
+.bai-bai-regex-vue-list *,
+.bai-bai-regex-sortable-ghost,
+.bai-bai-regex-sortable-chosen,
+.bai-bai-regex-sortable-drag,
+.bai-bai-regex-sortable-fallback {
+    cursor: default !important;
+}
+
 .bai-bai-regex-vue-list .regex-script-label,
 .bai-bai-regex-vue-list .regex_script_name {
     cursor: default !important;
 }
 
-.bai-bai-regex-vue-list .drag-handle {
+.bai-bai-regex-vue-list .bai-bai-regex-script-drag-handle {
     cursor: grab !important;
+    touch-action: none;
+    user-select: none;
 }
 
-.bai-bai-regex-vue-list .drag-handle:active {
+.bai-bai-regex-vue-list .bai-bai-regex-script-drag-handle:active {
     cursor: grabbing !important;
 }
 
@@ -3975,8 +4061,35 @@ function installRegexVueManagerStyle() {
     text-align: right;
 }
 
-.bai-bai-regex-group-body.ui-sortable {
+.bai-bai-regex-group-body {
     min-height: 8px;
+}
+
+.bai-bai-regex-sortable-ghost {
+    opacity: 0.35;
+}
+
+.bai-bai-regex-sortable-chosen {
+    cursor: grabbing !important;
+}
+
+.bai-bai-regex-sortable-drag {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    cursor: grabbing !important;
+    opacity: 0.95;
+}
+
+.bai-bai-regex-sortable-fallback {
+    cursor: grabbing !important;
+}
+
+body.bai-bai-regex-drag-cursor-active #regex_container,
+body.bai-bai-regex-drag-cursor-active #regex_container *,
+body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-ghost,
+body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-chosen,
+body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-drag,
+body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-fallback {
+    cursor: grabbing !important;
 }
 `;
     document.head.append(style);
@@ -4744,147 +4857,27 @@ async function openOptimizedRegexEditorWithScript(scriptType, script) {
 }
 
 function ensureRegexScriptGroupMeta(scriptType, scriptId) {
-    const groupState = getRegexGroupStateForScriptType(scriptType);
+    if (!scriptId) {
+        return;
+    }
 
-    if (!groupState.scripts[scriptId]) {
+    const groupState = getRegexGroupStateForScriptType(scriptType);
+    const existingMeta = groupState.scripts[scriptId];
+
+    if (!existingMeta || typeof existingMeta !== 'object') {
         groupState.scripts[scriptId] = {
             groupId: REGEX_UNGROUPED_GROUP_ID,
             order: Object.keys(groupState.scripts).length,
         };
-    }
-}
-
-async function refreshRegexVueManagerSortables() {
-    const manager = getRegexVueManagerState();
-
-    if (!manager.vue || !manager.state) {
         return;
     }
 
-    await manager.vue.nextTick();
-    destroyRegexVueManagerSortables();
-
-    for (const typeKey of ['global', 'preset', 'scoped']) {
-        const bodies = Array.from(document.querySelectorAll(`.bai-bai-regex-group-body[data-regex-type="${typeKey}"]`));
-
-        for (const body of bodies) {
-            const sortable = $(body).sortable;
-
-            if (typeof sortable !== 'function') {
-                continue;
-            }
-
-            $(body).sortable({
-                connectWith: `.bai-bai-regex-group-body[data-regex-type="${typeKey}"]`,
-                handle: '.drag-handle',
-                stop: () => {
-                    void saveRegexVueOrderFromDom(typeKey);
-                },
-            });
-
-            manager.sortableInstances.push(body);
-        }
-    }
-}
-
-function destroyRegexVueManagerSortables() {
-    const manager = getRegexVueManagerState();
-
-    for (const body of manager.sortableInstances ?? []) {
-        try {
-            if (body instanceof HTMLElement && isRegexSortableInitialized(body)) {
-                $(body).sortable('destroy');
-            }
-        } catch (error) {
-            console.debug(`${LOG_PREFIX} Failed to destroy regex Vue sortable`, error);
-        }
+    if (!existingMeta.groupId) {
+        existingMeta.groupId = REGEX_UNGROUPED_GROUP_ID;
     }
 
-    manager.sortableInstances = [];
-}
-
-async function saveRegexVueOrderFromDom(typeKey) {
-    const scriptType = getRegexScriptTypeFromKey(typeKey);
-
-    if (scriptType === null) {
-        return;
-    }
-
-    const listSelector = getRegexListSelectorForScriptType(scriptType);
-    const list = listSelector ? document.querySelector(listSelector) : null;
-
-    if (!(list instanceof HTMLElement)) {
-        return;
-    }
-
-    const scripts = getRegexScriptsByType(scriptType);
-    const scriptById = new Map(scripts.filter(Boolean).map(script => [script.id, script]));
-    const seen = new Set();
-    const reorderedScripts = [];
-    const groupState = getRegexGroupStateForScriptType(scriptType);
-
-    for (const body of list.querySelectorAll('.bai-bai-regex-group-body[data-regex-group-id]')) {
-        const groupId = body.getAttribute('data-regex-group-id') || REGEX_UNGROUPED_GROUP_ID;
-        let order = 0;
-
-        for (const row of body.querySelectorAll(':scope > .regex-script-label')) {
-            const scriptId = row.id;
-            const script = scriptById.get(scriptId);
-
-            if (!script || seen.has(scriptId)) {
-                continue;
-            }
-
-            seen.add(scriptId);
-            reorderedScripts.push(script);
-            groupState.scripts[scriptId] = { groupId, order };
-            order += 1;
-        }
-    }
-
-    for (const script of scripts) {
-        if (script?.id && !seen.has(script.id)) {
-            reorderedScripts.push(script);
-        }
-    }
-
-    if (reorderedScripts.length !== scripts.length) {
-        console.debug(`${LOG_PREFIX} Regex Vue order save skipped because DOM and data lengths differ`);
-        syncRegexVueManagerState();
-        return;
-    }
-
-    await saveRegexScriptList(scriptType, reorderedScripts);
-    saveRegexGroupSettings();
-    syncRegexVueManagerState();
-    await reloadCurrentChatForRegexChange();
-}
-
-function disableNativeRegexSortables() {
-    for (const { selector } of getRegexScriptListDefinitions()) {
-        const list = document.querySelector(selector);
-
-        try {
-            if (list instanceof HTMLElement && isRegexSortableInitialized(list)) {
-                $(list).sortable('disable');
-            }
-        } catch (error) {
-            console.debug(`${LOG_PREFIX} Failed to disable native regex sortable`, error);
-        }
-    }
-}
-
-function enableNativeRegexSortables() {
-    for (const { selector } of getRegexScriptListDefinitions()) {
-        const list = document.querySelector(selector);
-
-        try {
-            if (list instanceof HTMLElement && isRegexSortableInitialized(list)) {
-                $(list).sortable('enable');
-            }
-        } catch (error) {
-            console.debug(`${LOG_PREFIX} Failed to enable native regex sortable`, error);
-        }
+    if (!Number.isFinite(Number(existingMeta.order))) {
+        existingMeta.order = Object.keys(groupState.scripts).length;
     }
 }
 
@@ -4908,7 +4901,6 @@ async function restoreRegexRowsAfterVueManagerRemove() {
     }
 
     updateRegexBulkControls();
-    scheduleRegexSortablePatch();
 }
 
 function installOptimizedRegexImportHandler() {
@@ -5022,7 +5014,6 @@ async function importRegexFilesOptimized(inputElement) {
         }
 
         updateRegexBulkControls();
-        scheduleRegexSortablePatch();
         console.debug(`${LOG_PREFIX} Imported ${validScripts.length} regex scripts without list rebuild`);
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to import regex scripts`, error);
@@ -5251,7 +5242,6 @@ async function moveOptimizedRegexScriptRow(row, toType) {
 
         targetList.append(row);
         updateRegexBulkControls();
-        scheduleRegexSortablePatch();
         await reloadCurrentChatForRegexChange();
     } catch (error) {
         const targetIndex = targetScripts.indexOf(movedScript);
@@ -5296,95 +5286,98 @@ function sanitizeRegexExportFileName(name) {
     return String(name).replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase();
 }
 
-function scheduleRegexSortablePatch(delayMs = 80) {
+function scheduleNativeRegexSortableGuard(delayMs = 80) {
     if (!settings.regexQuickOperationOptimizationEnabled) {
         return;
     }
 
     const state = getRegexQuickOperationState();
-    clearTimeout(state.sortablePatchTimer);
-    state.sortablePatchTimer = setTimeout(() => {
-        state.sortablePatchTimer = null;
-        patchRegexSortableStops();
+    clearTimeout(state.nativeSortableGuardTimer);
+    state.nativeSortableGuardTimer = setTimeout(() => {
+        state.nativeSortableGuardTimer = null;
+        guardNativeRegexSortables();
     }, delayMs);
 }
 
-function patchRegexSortableStops() {
+function guardNativeRegexSortables() {
     if (!settings.regexQuickOperationOptimizationEnabled) {
         return;
     }
 
-    if (isRegexVueManagerActive()) {
-        disableNativeRegexSortables();
+    const manager = getRegexVueManagerState();
+    const shouldDisable = Boolean(manager.installing || manager.app || areRegexVueManagerTargetsOwned());
+
+    if (!shouldDisable) {
         return;
     }
 
+    const waitingForNativeSortable = disableNativeRegexSortables();
     const state = getRegexQuickOperationState();
-    let waitingForSortableInit = false;
 
-    for (const { selector, scriptType } of getRegexScriptListDefinitions()) {
-        const list = document.querySelector(selector);
-
-        if (!(list instanceof HTMLElement)) {
-            continue;
-        }
-
-        const sortable = $(list).sortable;
-
-        if (typeof sortable !== 'function') {
-            continue;
-        }
-
-        if (!isRegexSortableInitialized(list)) {
-            waitingForSortableInit = true;
-            continue;
-        }
-
-        const currentStop = $(list).sortable('option', 'stop');
-
-        if (currentStop?.__baiBaiToolkitRegexQuickOperationStop) {
-            continue;
-        }
-
-        if (!state.sortableOriginalStops.has(list)) {
-            state.sortableOriginalStops.set(list, currentStop);
-        }
-
-        const optimizedStop = function () {
-            void saveRegexScriptOrderFromDom(list, scriptType).catch(error => {
-                console.debug(`${LOG_PREFIX} Failed to save regex script order`, error);
-                toastr.error(t`Failed to save regex script order. See console for details.`);
-            });
-        };
-
-        optimizedStop.__baiBaiToolkitRegexQuickOperationStop = true;
-        optimizedStop.__baiBaiToolkitOriginalRegexStop = currentStop;
-        $(list).sortable('option', 'stop', optimizedStop);
-    }
-
-    if (waitingForSortableInit) {
-        state.sortablePatchRetries = (state.sortablePatchRetries ?? 0) + 1;
-
-        if (state.sortablePatchRetries <= 20) {
-            scheduleRegexSortablePatch(250);
-        }
+    if (waitingForNativeSortable && (state.nativeSortableGuardRetries ?? 0) < 40) {
+        state.nativeSortableGuardRetries = (state.nativeSortableGuardRetries ?? 0) + 1;
+        scheduleNativeRegexSortableGuard(250);
     } else {
-        state.sortablePatchRetries = 0;
+        state.nativeSortableGuardRetries = 0;
     }
 }
 
-function restoreRegexSortableStops(state = getRegexQuickOperationState()) {
-    for (const [list, originalStop] of state.sortableOriginalStops) {
+function disableNativeRegexSortables() {
+    if (typeof $ !== 'function' || typeof $.fn?.sortable !== 'function') {
+        return true;
+    }
+
+    let waitingForNativeSortable = false;
+
+    for (const { selector } of getRegexScriptListDefinitions()) {
+        const list = document.querySelector(selector);
+
+        if (!(list instanceof HTMLElement)) {
+            waitingForNativeSortable = true;
+            continue;
+        }
+
         try {
-            if (list instanceof HTMLElement && isRegexSortableInitialized(list)) {
-                $(list).sortable('option', 'stop', originalStop ?? null);
+            if (!isRegexSortableInitialized(list)) {
+                waitingForNativeSortable = true;
+                continue;
+            }
+
+            if ($(list).sortable('option', 'disabled') !== true) {
+                $(list).sortable('disable');
             }
         } catch (error) {
-            console.debug(`${LOG_PREFIX} Failed to restore regex sortable handler`, error);
+            console.debug(`${LOG_PREFIX} Failed to disable native regex sortable`, error);
         }
     }
 
-    state.sortableOriginalStops.clear();
+    return waitingForNativeSortable;
+}
+
+function enableNativeRegexSortables() {
+    if (typeof $ !== 'function' || typeof $.fn?.sortable !== 'function') {
+        return;
+    }
+
+    for (const { selector } of getRegexScriptListDefinitions()) {
+        const list = document.querySelector(selector);
+
+        try {
+            if (list instanceof HTMLElement && isRegexSortableInitialized(list)) {
+                $(list).sortable('enable');
+            }
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to enable native regex sortable`, error);
+        }
+    }
+}
+
+function isRegexSortableInitialized(list) {
+    if (typeof $ !== 'function') {
+        return false;
+    }
+
+    return Boolean($(list).data('ui-sortable') || $(list).data('sortable'));
 }
 
 function getRegexScriptListDefinitions() {
@@ -5397,10 +5390,6 @@ function getRegexScriptListDefinitions() {
 
 function getRegexListSelectorForScriptType(scriptType) {
     return getRegexScriptListDefinitions().find(definition => definition.scriptType === scriptType)?.selector ?? null;
-}
-
-function isRegexSortableInitialized(list) {
-    return Boolean($(list).data('ui-sortable') || $(list).data('sortable'));
 }
 
 function handleRegexQuickOperationClick(event) {
@@ -5727,6 +5716,83 @@ function getRegexScriptTypeFromList(list) {
     }
 }
 
+async function saveRegexScriptsOrderFromModel(typeKey) {
+    const scriptType = getRegexScriptTypeFromKey(typeKey);
+
+    if (scriptType === null) {
+        return;
+    }
+
+    const manager = getRegexVueManagerState();
+    if (!manager.state) return;
+
+    const list = manager.state.lists[typeKey];
+    if (!list) return;
+
+    const scripts = getRegexScriptsByType(scriptType);
+    const scriptIds = new Set(scripts.map(script => script?.id).filter(Boolean));
+    const scriptById = new Map(scripts.filter(script => script?.id).map(script => [script.id, script]));
+    const seen = new Set();
+    const reorderedScripts = [];
+    const groupState = getRegexGroupStateForScriptType(scriptType);
+    let mappedScriptCount = 0;
+
+    for (const group of list.groups) {
+        let order = 0;
+        const groupId = group.isUngrouped ? REGEX_UNGROUPED_GROUP_ID : group.id;
+
+        for (const script of group.scripts) {
+            if (!script?.id || !scriptIds.has(script.id) || seen.has(script.id)) {
+                continue;
+            }
+
+            const sourceScript = scriptById.get(script.id);
+
+            if (!sourceScript) {
+                continue;
+            }
+
+            seen.add(script.id);
+            reorderedScripts.push(sourceScript);
+            groupState.scripts[script.id] = { groupId, order };
+            order += 1;
+            mappedScriptCount += 1;
+        }
+    }
+
+    if (scripts.length > 0 && mappedScriptCount === 0) {
+        console.debug(`${LOG_PREFIX} Regex Vue order save skipped because the drag model contains no known scripts`);
+        toastr.error(t`Regex order was not saved because the drag result was invalid.`);
+        syncRegexVueManagerState();
+        return;
+    }
+
+    for (const script of scripts) {
+        if (script?.id && !seen.has(script.id)) {
+            reorderedScripts.push(script);
+        }
+    }
+
+    if (reorderedScripts.length !== scripts.length) {
+        console.debug(`${LOG_PREFIX} Regex Vue order save skipped because model and data lengths differ`);
+        syncRegexVueManagerState();
+        return;
+    }
+
+    await saveRegexScriptList(scriptType, reorderedScripts);
+    saveRegexGroupSettings();
+    syncRegexVueManagerState();
+    await reloadCurrentChatForRegexChange();
+}
+
+function saveRegexScriptsOrderFromModelSafely(typeKey) {
+    void saveRegexScriptsOrderFromModel(typeKey).catch(error => {
+        console.debug(`${LOG_PREFIX} Failed to save regex script order`, error);
+        toastr.error(t`Failed to save regex script order. See console for details.`);
+        syncRegexVueManagerState();
+    });
+}
+
 function updateRegexScriptRowDisabled(row, disabled) {
     const checkbox = row.querySelector('.disable_regex');
 
@@ -5746,40 +5812,6 @@ function updateRegexScriptRowFromScript(row, script) {
     }
 
     updateRegexScriptRowDisabled(row, Boolean(script.disabled ?? false));
-}
-
-async function saveRegexScriptOrderFromDom(list, scriptType) {
-    const scripts = getRegexScriptsByType(scriptType);
-    const scriptById = new Map(scripts.filter(Boolean).map(script => [script.id, script]));
-    const seen = new Set();
-    const reorderedScripts = [];
-
-    for (const row of list.querySelectorAll(`:scope > ${REGEX_SCRIPT_ROW_SELECTOR}`)) {
-        const scriptId = row.id;
-        const script = scriptById.get(scriptId);
-
-        if (!script || seen.has(scriptId)) {
-            continue;
-        }
-
-        seen.add(scriptId);
-        reorderedScripts.push(script);
-    }
-
-    for (const script of scripts) {
-        if (script?.id && !seen.has(script.id)) {
-            reorderedScripts.push(script);
-        }
-    }
-
-    if (reorderedScripts.length !== scripts.length) {
-        console.debug(`${LOG_PREFIX} Regex order save skipped because DOM and data lengths differ`);
-        return;
-    }
-
-    await saveRegexScriptList(scriptType, reorderedScripts);
-    console.debug(`${LOG_PREFIX} Regex scripts in ${list.id} reordered without list rebuild`);
-    await reloadCurrentChatForRegexChange();
 }
 
 async function saveRegexScriptList(scriptType, scripts) {
