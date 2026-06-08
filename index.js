@@ -30,7 +30,12 @@ const CURRENT_VERSION = '0.23.0';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
+const FAST_SETTINGS_BOOTSTRAP_FETCH_KEY = '__baiBaiToolkitFastSettingsBootstrapFetchPatched';
 const FAST_CHARACTER_LIST_FETCH_KEY = '__baiBaiToolkitFastCharacterListFetchPatched';
+const BAIBAOKU_EARLY_BRIDGE_KEY = '__baibaokuEarlyBridge';
+const BAIBAOKU_STATUS_URL = '/api/plugins/baibaoku/v1/status';
+const BAIBAOKU_SETTINGS_FAST_CONFIG_URL = '/api/plugins/baibaoku/v1/settings/fast-config';
+const BAIBAOKU_STATUS_TIMEOUT_MS = 3000;
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const PERFORMANCE_TRACE_FETCH_KEY = '__baiBaiToolkitPerformanceTraceFetchPatched';
 const TRANSLATE_MESSAGE_UPDATED_OPTIMIZATION_KEY = '__baiBaiToolkitTranslateMessageUpdatedOptimized';
@@ -140,6 +145,7 @@ const SAVE_REQUEST_GZIP_PATHS = new Set([
     '/api/chats/save',
     '/api/chats/group/save',
 ]);
+const FAST_SETTINGS_BOOTSTRAP_CACHE_MS = 15_000;
 const PERFORMANCE_TRACE_FETCH_PATHS = new Set([
     '/api/chats/get',
     '/api/chats/group/get',
@@ -202,6 +208,7 @@ const defaultSettings = {
     customCssShadowPropertyEnabled: true,
     worldInfoDrawerOptimizationEnabled: true,
     characterSearchInputOptimizationEnabled: true,
+    baibaokuSettingsAccelerationEnabled: true,
     fastCharacterListEnabled: true,
     characterListAvatarLazyLoadEnabled: true,
     fastChatListEnabled: true,
@@ -233,6 +240,7 @@ const legacySettingsKeys = [
     'descriptionInputIdleSaveEnabled',
     'imeCommitOptimizationEnabled',
     'mobileChatEntryKeyboardSuppressionEnabled',
+    'fastSettingsBootstrapEnabled',
 ];
 const settings = { ...defaultSettings };
 const extensionState = getExtensionState();
@@ -260,6 +268,7 @@ if (!extensionState.installed) {
     console.debug(`${LOG_PREFIX} Installed`);
 }
 
+disableFastSettingsBootstrapFetchHook();
 installFastCharacterListFetchHook();
 installSaveRequestGzipFetchHook();
 installPerformanceTraceFetchHook();
@@ -301,6 +310,13 @@ function initializeSettings() {
 
     let removedLegacySetting = false;
 
+    if (
+        typeof extension_settings[SETTINGS_KEY].baibaokuSettingsAccelerationEnabled !== 'boolean'
+        && typeof extension_settings[SETTINGS_KEY].fastSettingsBootstrapEnabled === 'boolean'
+    ) {
+        extension_settings[SETTINGS_KEY].baibaokuSettingsAccelerationEnabled = extension_settings[SETTINGS_KEY].fastSettingsBootstrapEnabled;
+    }
+
     for (const key of legacySettingsKeys) {
         if (Object.prototype.hasOwnProperty.call(extension_settings[SETTINGS_KEY], key)) {
             delete extension_settings[SETTINGS_KEY][key];
@@ -322,6 +338,44 @@ function initializeSettings() {
     }
 }
 
+function getBaibaokuEarlyBridge() {
+    const bridge = globalThis[BAIBAOKU_EARLY_BRIDGE_KEY];
+    return bridge && typeof bridge === 'object' ? bridge : null;
+}
+
+async function setBaibaokuSettingsAccelerationEnabled(enabled) {
+    const next = Boolean(enabled);
+    const previous = settings.baibaokuSettingsAccelerationEnabled !== false;
+    settings.baibaokuSettingsAccelerationEnabled = next;
+
+    const bridge = getBaibaokuEarlyBridge();
+    if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
+        bridge.setSettingsAccelerationEnabled(next);
+    } else if (bridge) {
+        bridge.settingsAccelerationEnabled = next;
+    }
+
+    try {
+        const saved = await saveBaibaokuSettingsFastConfig({ settingsAccelerationEnabled: next });
+        const savedEnabled = saved.settingsAccelerationEnabled !== false;
+        settings.baibaokuSettingsAccelerationEnabled = savedEnabled;
+        if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
+            bridge.setSettingsAccelerationEnabled(savedEnabled);
+        } else if (bridge) {
+            bridge.settingsAccelerationEnabled = savedEnabled;
+        }
+        return saved;
+    } catch (error) {
+        settings.baibaokuSettingsAccelerationEnabled = previous;
+        if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
+            bridge.setSettingsAccelerationEnabled(previous);
+        } else if (bridge) {
+            bridge.settingsAccelerationEnabled = previous;
+        }
+        throw error;
+    }
+}
+
 function normalizeMessageEditClickSettings() {
     if (settings.messageDoubleClickEditEnabled && settings.messageTripleClickEditEnabled) {
         settings.messageDoubleClickEditEnabled = false;
@@ -333,7 +387,10 @@ function normalizeMessageEditClickSettings() {
 }
 
 function saveExtensionSettings() {
-    Object.assign(extension_settings[SETTINGS_KEY], settings);
+    const persistedSettings = { ...settings };
+    delete persistedSettings.baibaokuSettingsAccelerationEnabled;
+    Object.assign(extension_settings[SETTINGS_KEY], persistedSettings);
+    delete extension_settings[SETTINGS_KEY].baibaokuSettingsAccelerationEnabled;
     saveSettingsDebounced();
 }
 
@@ -1785,6 +1842,7 @@ async function renderSettingsPanel() {
     });
 
     initializeUpdateUI(container);
+    initializeBaibaokuPanel(container);
 
     $('#bai_bai_toolkit_update_prompt_on_available_enabled')
         .prop('checked', settings.updatePromptOnAvailableEnabled)
@@ -1864,6 +1922,22 @@ async function renderSettingsPanel() {
             applyCharacterSearchInputOptimization();
         });
 
+    $('#bai_bai_toolkit_baibaoku_settings_acceleration_enabled')
+        .prop('checked', settings.baibaokuSettingsAccelerationEnabled)
+        .on('input', async function () {
+            const checkbox = $(this);
+            checkbox.prop('disabled', true);
+            try {
+                await setBaibaokuSettingsAccelerationEnabled(Boolean(checkbox.prop('checked')));
+            } catch (error) {
+                console.debug(`${LOG_PREFIX} Failed to save BaiBaoKu settings acceleration config`, error);
+                checkbox.prop('checked', settings.baibaokuSettingsAccelerationEnabled !== false);
+            } finally {
+                checkbox.prop('disabled', false);
+                refreshBaibaokuPanelStatus(container);
+            }
+        });
+
     $('#bai_bai_toolkit_fast_character_list_enabled')
         .prop('checked', settings.fastCharacterListEnabled)
         .on('input', function () {
@@ -1925,6 +1999,131 @@ async function renderSettingsPanel() {
         });
 
     chatOptimizations.applyChatOptimizationCompatibilityIndicators(container);
+}
+
+function initializeBaibaokuPanel(container) {
+    container.find('#bai_bai_toolkit_baibaoku_refresh_status')
+        .off('click.baiBaiToolkitBaibaokuStatus')
+        .on('click.baiBaiToolkitBaibaokuStatus', () => {
+            refreshBaibaokuPanelStatus(container);
+        });
+
+    refreshBaibaokuPanelStatus(container);
+}
+
+async function refreshBaibaokuPanelStatus(container) {
+    const serverStatus = container.find('#bai_bai_toolkit_baibaoku_server_status');
+    const driverStatus = container.find('#bai_bai_toolkit_baibaoku_driver_status');
+    const bridgeStatus = container.find('#bai_bai_toolkit_baibaoku_bridge_status');
+    const accelerationToggle = container.find('#bai_bai_toolkit_baibaoku_settings_acceleration_enabled');
+    const bridge = getBaibaokuEarlyBridge();
+
+    updateBaibaokuStatusText(bridgeStatus, bridge?.installed
+        ? `已注入${bridge.version ? ` v${bridge.version}` : ''}`
+        : '未注入', Boolean(bridge?.installed));
+
+    const bridgeEnabled = typeof bridge?.isSettingsAccelerationEnabled === 'function'
+        ? bridge.isSettingsAccelerationEnabled()
+        : null;
+    if (typeof bridgeEnabled === 'boolean') {
+        settings.baibaokuSettingsAccelerationEnabled = bridgeEnabled;
+        accelerationToggle.prop('checked', bridgeEnabled);
+    }
+
+    updateBaibaokuStatusText(serverStatus, '检测中', null);
+    updateBaibaokuStatusText(driverStatus, '检测中', null);
+
+    try {
+        const status = await fetchBaibaokuStatus();
+        const driver = status?.driver;
+        updateBaibaokuStatusText(serverStatus, `已连接${status?.version ? ` v${status.version}` : ''}`, true);
+        updateBaibaokuStatusText(driverStatus, driver?.available
+            ? `可用${driver.package ? ` (${driver.package})` : ''}`
+            : '不可用', Boolean(driver?.available));
+
+        try {
+            const config = await fetchBaibaokuSettingsFastConfig();
+            const enabled = config.settingsAccelerationEnabled !== false;
+            settings.baibaokuSettingsAccelerationEnabled = enabled;
+            accelerationToggle.prop('checked', enabled);
+            if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
+                bridge.setSettingsAccelerationEnabled(enabled);
+            } else if (bridge) {
+                bridge.settingsAccelerationEnabled = enabled;
+            }
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to read BaiBaoKu settings acceleration config`, error);
+        }
+    } catch {
+        updateBaibaokuStatusText(serverStatus, '未连接', false);
+        updateBaibaokuStatusText(driverStatus, '未知', false);
+    }
+}
+
+async function fetchBaibaokuStatus() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), BAIBAOKU_STATUS_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(BAIBAOKU_STATUS_URL, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok || payload?.ok !== true) {
+            throw new Error(payload?.error?.message || `HTTP ${response.status}`);
+        }
+
+        return payload.data;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function fetchBaibaokuSettingsFastConfig() {
+    const response = await fetch(BAIBAOKU_SETTINGS_FAST_CONFIG_URL, {
+        method: 'GET',
+        cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || payload?.ok !== true) {
+        throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+    }
+
+    return payload.data || {};
+}
+
+async function saveBaibaokuSettingsFastConfig(config) {
+    const headers = new Headers(getRequestHeaders());
+    if (!headers.has('content-type')) {
+        headers.set('content-type', 'application/json');
+    }
+
+    const response = await fetch(BAIBAOKU_SETTINGS_FAST_CONFIG_URL, {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify(config || {}),
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || payload?.ok !== true) {
+        throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+    }
+
+    return payload.data || {};
+}
+
+function updateBaibaokuStatusText(element, text, ok) {
+    element.text(text);
+    element.css('color', ok === null
+        ? ''
+        : ok
+            ? 'var(--SmartThemeQuoteColor)'
+            : 'var(--SmartThemeEmColor)');
 }
 
 async function initializeUpdateUI(container) {
@@ -8879,6 +9078,153 @@ function isPowerUserResizeHandler(handler) {
         && source.includes('power_user.movingUIState');
 }
 
+function disableFastSettingsBootstrapFetchHook() {
+    const existing = globalThis[FAST_SETTINGS_BOOTSTRAP_FETCH_KEY];
+
+    if (!existing?.wrappedFetch) {
+        return;
+    }
+
+    existing.isEnabled = () => false;
+    existing.cachedBootstrapTextPromise = null;
+    existing.cachedBootstrapTextExpiresAt = 0;
+
+    if (globalThis.fetch === existing.wrappedFetch && typeof existing.originalFetch === 'function') {
+        globalThis.fetch = existing.originalFetch;
+    }
+}
+
+function installFastSettingsBootstrapFetchHook() {
+    const existing = globalThis[FAST_SETTINGS_BOOTSTRAP_FETCH_KEY];
+    if (existing?.wrappedFetch) {
+        existing.isEnabled = () => false;
+        return existing;
+    }
+
+    const originalFetch = globalThis.fetch;
+
+    if (typeof originalFetch !== 'function') {
+        return null;
+    }
+
+    const state = {
+        originalFetch: originalFetch.bind(globalThis),
+        wrappedFetch: null,
+        cachedBootstrapTextPromise: null,
+        cachedBootstrapTextExpiresAt: 0,
+        hitCount: 0,
+        isEnabled: () => false,
+    };
+
+    state.wrappedFetch = async function baiBaiToolkitFastSettingsBootstrapFetch(input, init) {
+        try {
+            if (!state.isEnabled()) {
+                return state.originalFetch(input, init);
+            }
+
+            if (!(await isFastSettingsBootstrapRequest(input, init))) {
+                return state.originalFetch(input, init);
+            }
+
+            state.hitCount += 1;
+            console.debug(`${LOG_PREFIX} Fast settings bootstrap intercept #${state.hitCount}`);
+            return await fetchFastSettingsBootstrap(state.originalFetch, input, init, state);
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Fast settings bootstrap path failed; falling back to /api/settings/get`, error);
+            return state.originalFetch(input, init);
+        }
+    };
+
+    state.wrappedFetch[FAST_SETTINGS_BOOTSTRAP_FETCH_KEY] = true;
+    globalThis[FAST_SETTINGS_BOOTSTRAP_FETCH_KEY] = state;
+    globalThis.fetch = state.wrappedFetch;
+    return state;
+}
+
+async function isFastSettingsBootstrapRequest(input, init) {
+    const rawUrl = getFetchRequestUrl(input);
+
+    if (!rawUrl || getFetchRequestMethod(input, init) !== 'POST') {
+        return false;
+    }
+
+    try {
+        const url = new URL(rawUrl, location.href);
+        if (url.origin !== location.origin || url.pathname !== '/api/settings/get') {
+            return false;
+        }
+    } catch {
+        return false;
+    }
+
+    const body = await readFetchJsonBody(input, init);
+    if (body === null) {
+        return !hasFetchBody(input, init);
+    }
+
+    return isPlainEmptyObject(body);
+}
+
+async function fetchFastSettingsBootstrap(fetchFn, input, init, state) {
+    const text = await getFastSettingsBootstrapText(fetchFn, input, init, state);
+    return new Response(text, {
+        status: 200,
+        statusText: 'OK',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+    });
+}
+
+async function getFastSettingsBootstrapText(fetchFn, input, init, state) {
+    const cacheExpired = state.cachedBootstrapTextExpiresAt > 0 && Date.now() > state.cachedBootstrapTextExpiresAt;
+    if (!state.cachedBootstrapTextPromise || cacheExpired) {
+        state.cachedBootstrapTextPromise = fetchFastSettingsBootstrapText(fetchFn, input, init)
+            .then((text) => {
+                state.cachedBootstrapTextExpiresAt = Date.now() + FAST_SETTINGS_BOOTSTRAP_CACHE_MS;
+                return text;
+            })
+            .catch((error) => {
+                state.cachedBootstrapTextPromise = null;
+                state.cachedBootstrapTextExpiresAt = 0;
+                throw error;
+            });
+    }
+
+    return await state.cachedBootstrapTextPromise;
+}
+
+async function fetchFastSettingsBootstrapText(fetchFn, input, init) {
+    const headers = buildFetchHeaders(input, init);
+    const requestHeaders = getRequestHeaders();
+    for (const [key, value] of Object.entries(requestHeaders || {})) {
+        if (!headers.has(key)) {
+            headers.set(key, value);
+        }
+    }
+
+    const fastInit = {
+        ...copyFetchRequestOptions(input, init),
+        ...(init || {}),
+        method: 'POST',
+        headers,
+    };
+    delete fastInit.body;
+
+    const response = await fetchFn('/api/plugins/baibaoku/v1/settings/fast-bootstrap', fastInit);
+    if (!response?.ok) {
+        throw new Error(`Unexpected status ${response?.status || 'unknown'}`);
+    }
+
+    const text = await response.text();
+    const data = parseJsonOrNull(text);
+    if (!data || typeof data.settings !== 'string' || !data.bootstrap?.partial) {
+        throw new Error('Fast settings bootstrap returned an invalid payload');
+    }
+
+    return text;
+}
+
 function installFastCharacterListFetchHook() {
     const existing = globalThis[FAST_CHARACTER_LIST_FETCH_KEY];
     if (existing?.wrappedFetch) {
@@ -8992,6 +9338,15 @@ async function readFetchJsonBody(input, init) {
     } catch {
         return null;
     }
+}
+
+function hasFetchBody(input, init) {
+    if (Object.prototype.hasOwnProperty.call(init || {}, 'body')) {
+        const body = init.body;
+        return body !== undefined && body !== null && body !== '';
+    }
+
+    return isFetchRequest(input) && Boolean(input.body);
 }
 
 function parseJsonOrNull(text) {
