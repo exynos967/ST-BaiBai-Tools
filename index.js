@@ -30,6 +30,7 @@ const CURRENT_VERSION = '0.23.0';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
+const FAST_CHARACTER_LIST_FETCH_KEY = '__baiBaiToolkitFastCharacterListFetchPatched';
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const PERFORMANCE_TRACE_FETCH_KEY = '__baiBaiToolkitPerformanceTraceFetchPatched';
 const TRANSLATE_MESSAGE_UPDATED_OPTIMIZATION_KEY = '__baiBaiToolkitTranslateMessageUpdatedOptimized';
@@ -50,6 +51,8 @@ const REGEX_VUE_MANAGER_ROOT_ID = 'bai_bai_toolkit_regex_vue_manager_root';
 const REGEX_VUE_MANAGER_STYLE_ID = 'bai_bai_toolkit_regex_vue_manager_style';
 const REGEX_VUE_MANAGER_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
 const REGEX_VUE_DRAGGABLE_MODULE_PATH = './vendor/vue-draggable-next.esm-browser.prod.js';
+const CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY = '__baiBaiToolkitCharacterListAvatarLazyLoad';
+const CHARACTER_LIST_AVATAR_LAZY_LOAD_STYLE_ID = 'bai_bai_toolkit_character_list_avatar_lazy_load_style';
 const REGEX_UNGROUPED_GROUP_ID = '__ungrouped';
 const REGEX_PENDING_ASSIGNMENT_GROUP_ID = '__pending_assignment';
 const REGEX_VUE_GROUP_BODY_TRANSITION_KEY = '__baiBaiToolkitRegexVueGroupBodyTransition';
@@ -107,6 +110,30 @@ const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_ent
 const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
 const WORLD_INFO_LAZY_SELECT2_DATASET_KEY = 'baiBaiToolkitLazySelect2';
 const WORLD_INFO_DEFERRED_OPTIONS_DATASET_KEY = 'baiBaiToolkitDeferredOptions';
+const CHARACTER_LIST_SELECTOR = '#rm_print_characters_block';
+const CHARACTER_LIST_AVATAR_SELECTOR = `${CHARACTER_LIST_SELECTOR} .character_select .avatar img`;
+const PERSONA_LIST_SELECTOR = '#user_avatar_block';
+const PERSONA_LIST_AVATAR_SELECTOR = `${PERSONA_LIST_SELECTOR} .avatar-container .avatar img`;
+const WELCOME_RECENT_CHAT_SELECTOR = '.welcomePanel .recentChat';
+const WELCOME_RECENT_CHAT_AVATAR_SELECTOR = `${WELCOME_RECENT_CHAT_SELECTOR} .avatar img`;
+const AVATAR_LAZY_LOAD_APPEND_TARGET_SELECTOR = `${CHARACTER_LIST_SELECTOR}, ${PERSONA_LIST_SELECTOR}`;
+const AVATAR_LAZY_LOAD_NATIVE_APPEND_TARGET_SELECTOR = '#chat';
+const AVATAR_LAZY_LOAD_SELECTOR = [
+    CHARACTER_LIST_AVATAR_SELECTOR,
+    PERSONA_LIST_AVATAR_SELECTOR,
+    WELCOME_RECENT_CHAT_AVATAR_SELECTOR,
+].join(', ');
+const AVATAR_LAZY_LOAD_RELATIVE_SELECTOR = [
+    '.character_select .avatar img',
+    '.avatar-container .avatar img',
+    `${WELCOME_RECENT_CHAT_SELECTOR} .avatar img`,
+].join(', ');
+const CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY = 'baiBaiToolkitLazyAvatarSrc';
+const CHARACTER_LIST_LAZY_AVATAR_PLACEHOLDER_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS = 'bai-bai-toolkit-lazy-avatar-pending';
+const CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS = 'bai-bai-toolkit-lazy-avatar-loaded';
+const CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS = 'bai-bai-toolkit-lazy-avatar-shell';
+const CHARACTER_LIST_LAZY_AVATAR_ROOT_MARGIN = '800px 0px 1200px 0px';
 const SILENT_UPDATE_STORAGE_KEY = 'bai_bai_toolkit_silent_update';
 const SILENT_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 const SAVE_REQUEST_GZIP_PATHS = new Set([
@@ -175,6 +202,8 @@ const defaultSettings = {
     customCssShadowPropertyEnabled: true,
     worldInfoDrawerOptimizationEnabled: true,
     characterSearchInputOptimizationEnabled: true,
+    fastCharacterListEnabled: true,
+    characterListAvatarLazyLoadEnabled: true,
     fastChatListEnabled: true,
     welcomeRecentChatDirectOpenEnabled: true,
     saveRequestGzipEnabled: true,
@@ -231,6 +260,7 @@ if (!extensionState.installed) {
     console.debug(`${LOG_PREFIX} Installed`);
 }
 
+installFastCharacterListFetchHook();
 installSaveRequestGzipFetchHook();
 installPerformanceTraceFetchHook();
 chatOptimizations.observeChatManagementPopupCleanup();
@@ -1834,6 +1864,21 @@ async function renderSettingsPanel() {
             applyCharacterSearchInputOptimization();
         });
 
+    $('#bai_bai_toolkit_fast_character_list_enabled')
+        .prop('checked', settings.fastCharacterListEnabled)
+        .on('input', function () {
+            settings.fastCharacterListEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+        });
+
+    $('#bai_bai_toolkit_character_list_avatar_lazy_load_enabled')
+        .prop('checked', settings.characterListAvatarLazyLoadEnabled)
+        .on('input', function () {
+            settings.characterListAvatarLazyLoadEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+            applyCharacterListAvatarLazyLoadOptimization();
+        });
+
     chatOptimizations.bindChatOptimizationSettings({ saveSettings: saveExtensionSettings });
 
     $('#bai_bai_toolkit_save_request_gzip_enabled')
@@ -1953,6 +1998,7 @@ function applyFeatureSettings() {
     applyWorldInfoLazySelect2Optimization();
     applyWorldInfoCharacterFilterOptionsOptimization();
     applyCharacterSearchInputOptimization();
+    applyCharacterListAvatarLazyLoadOptimization();
     applyDescriptionCodeMirrorEditorOptimization();
     applyCustomCssInputOptimization();
     presetOptimizations.applyPresetScrollOptimization();
@@ -7434,6 +7480,466 @@ function removeCharacterSearchInputOptimization(state, originalInput) {
     state.installed = false;
 }
 
+function getCharacterListAvatarLazyLoadState() {
+    if (!extensionState[CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY] || typeof extensionState[CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY] !== 'object') {
+        extensionState[CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY] = {};
+    }
+
+    return extensionState[CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY];
+}
+
+function applyCharacterListAvatarLazyLoadOptimization() {
+    if (settings.characterListAvatarLazyLoadEnabled) {
+        installCharacterListAvatarLazyLoadOptimization();
+    } else {
+        restoreCharacterListAvatarLazyLoadOptimization();
+    }
+}
+
+function installCharacterListAvatarLazyLoadOptimization() {
+    const state = getCharacterListAvatarLazyLoadState();
+    state.enabled = true;
+
+    installCharacterListAvatarLazyLoadStyle();
+
+    if (typeof IntersectionObserver !== 'function') {
+        applyNativeCharacterListImageHints();
+        console.warn(`${LOG_PREFIX} IntersectionObserver is unavailable; character list avatar lazy loading fell back to native image hints`);
+        return;
+    }
+
+    installCharacterListAvatarIntersectionObserver(state);
+    installCharacterListAvatarAppendPatch(state);
+    installCharacterListAvatarNativeAppendPatch(state);
+    installCharacterListAvatarMutationObserver(state);
+    installCharacterListAvatarPageLoadedHandler(state);
+    scheduleProcessCharacterListAvatars(state);
+}
+
+function restoreCharacterListAvatarLazyLoadOptimization() {
+    const state = getCharacterListAvatarLazyLoadState();
+    state.enabled = false;
+
+    if (state.processTimer) {
+        clearTimeout(state.processTimer);
+        state.processTimer = null;
+    }
+
+    state.mutationObserver?.disconnect();
+    state.mutationObserver = null;
+    state.intersectionObserver?.disconnect();
+    state.intersectionObserver = null;
+
+    if (state.characterPageLoadedHandler) {
+        eventSource.removeListener?.(event_types.CHARACTER_PAGE_LOADED, state.characterPageLoadedHandler);
+        state.characterPageLoadedHandler = null;
+    }
+
+    restoreCharacterListAvatarAppendPatch(state);
+    restoreCharacterListAvatarNativeAppendPatch(state);
+    restorePendingCharacterListAvatars();
+    removeCharacterListAvatarLazyLoadStyle();
+}
+
+function installCharacterListAvatarAppendPatch(state) {
+    const originalAppend = globalThis.jQuery?.fn?.append;
+
+    if (typeof originalAppend !== 'function' || state.patchedAppend === originalAppend) {
+        return;
+    }
+
+    if (state.patchedAppend && globalThis.jQuery.fn.append === state.patchedAppend) {
+        return;
+    }
+
+    function patchedAppend(...args) {
+        if (settings.characterListAvatarLazyLoadEnabled && shouldPrepareCharacterListAppend(this)) {
+            prepareCharacterListAvatarAppendArguments(args, state);
+        }
+
+        const result = originalAppend.apply(this, args);
+
+        if (settings.characterListAvatarLazyLoadEnabled && shouldPrepareCharacterListAppend(this)) {
+            scheduleProcessCharacterListAvatars(state);
+        }
+
+        return result;
+    }
+
+    patchedAppend.__baiBaiToolkitCharacterListAvatarLazyLoadPatched = true;
+    patchedAppend.__baiBaiToolkitOriginalAppend = originalAppend;
+    Object.assign(patchedAppend, originalAppend);
+
+    state.originalAppend = originalAppend;
+    state.patchedAppend = patchedAppend;
+    globalThis.jQuery.fn.append = patchedAppend;
+}
+
+function restoreCharacterListAvatarAppendPatch(state) {
+    if (!state.patchedAppend || !globalThis.jQuery?.fn) {
+        return;
+    }
+
+    if (globalThis.jQuery.fn.append === state.patchedAppend && typeof state.originalAppend === 'function') {
+        globalThis.jQuery.fn.append = state.originalAppend;
+    }
+
+    state.originalAppend = null;
+    state.patchedAppend = null;
+}
+
+function installCharacterListAvatarNativeAppendPatch(state) {
+    const originalAppend = typeof Element !== 'undefined' ? Element.prototype.append : null;
+
+    if (typeof originalAppend !== 'function' || state.patchedNativeAppend === originalAppend) {
+        return;
+    }
+
+    if (state.patchedNativeAppend && Element.prototype.append === state.patchedNativeAppend) {
+        return;
+    }
+
+    function patchedNativeAppend(...args) {
+        if (settings.characterListAvatarLazyLoadEnabled && shouldPrepareCharacterListNativeAppend(this)) {
+            prepareCharacterListAvatarAppendArguments(args, state);
+        }
+
+        const result = originalAppend.apply(this, args);
+
+        if (settings.characterListAvatarLazyLoadEnabled && shouldPrepareCharacterListNativeAppend(this)) {
+            scheduleProcessCharacterListAvatars(state);
+        }
+
+        return result;
+    }
+
+    patchedNativeAppend.__baiBaiToolkitCharacterListAvatarLazyLoadPatched = true;
+    patchedNativeAppend.__baiBaiToolkitOriginalAppend = originalAppend;
+
+    state.originalNativeAppend = originalAppend;
+    state.patchedNativeAppend = patchedNativeAppend;
+    Element.prototype.append = patchedNativeAppend;
+}
+
+function restoreCharacterListAvatarNativeAppendPatch(state) {
+    if (!state.patchedNativeAppend || typeof Element === 'undefined') {
+        return;
+    }
+
+    if (Element.prototype.append === state.patchedNativeAppend && typeof state.originalNativeAppend === 'function') {
+        Element.prototype.append = state.originalNativeAppend;
+    }
+
+    state.originalNativeAppend = null;
+    state.patchedNativeAppend = null;
+}
+
+function shouldPrepareCharacterListAppend(targets) {
+    if (!targets || typeof targets.length !== 'number') {
+        return false;
+    }
+
+    for (const target of targets) {
+        if (target instanceof Element && target.matches(AVATAR_LAZY_LOAD_APPEND_TARGET_SELECTOR)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function shouldPrepareCharacterListNativeAppend(target) {
+    return target instanceof Element && target.matches(AVATAR_LAZY_LOAD_NATIVE_APPEND_TARGET_SELECTOR);
+}
+
+function prepareCharacterListAvatarAppendArguments(args, state) {
+    for (const arg of args) {
+        prepareCharacterListAvatarAppendArgument(arg, state);
+    }
+}
+
+function prepareCharacterListAvatarAppendArgument(arg, state) {
+    if (!arg) {
+        return;
+    }
+
+    if (arg instanceof Node) {
+        deferCharacterListAvatarNode(arg, state, { requireListContainer: false, observe: false });
+        return;
+    }
+
+    if (arg.jquery && typeof arg.each === 'function') {
+        arg.each((_, element) => {
+            if (element instanceof Node) {
+                deferCharacterListAvatarNode(element, state, { requireListContainer: false, observe: false });
+            }
+        });
+        return;
+    }
+
+    if (Array.isArray(arg)) {
+        for (const item of arg) {
+            prepareCharacterListAvatarAppendArgument(item, state);
+        }
+    }
+}
+
+function installCharacterListAvatarMutationObserver(state) {
+    if (state.mutationObserver) {
+        return;
+    }
+
+    const root = document.body || document.documentElement;
+
+    if (!root) {
+        return;
+    }
+
+    state.mutationObserver = new MutationObserver((mutations) => {
+        if (!settings.characterListAvatarLazyLoadEnabled || !state.enabled) {
+            return;
+        }
+
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                deferCharacterListAvatarNode(node, state);
+            }
+        }
+    });
+
+    state.mutationObserver.observe(root, { childList: true, subtree: true });
+}
+
+function installCharacterListAvatarPageLoadedHandler(state) {
+    if (state.characterPageLoadedHandler) {
+        return;
+    }
+
+    state.characterPageLoadedHandler = () => scheduleProcessCharacterListAvatars(state);
+    eventSource.on(event_types.CHARACTER_PAGE_LOADED, state.characterPageLoadedHandler);
+}
+
+function installCharacterListAvatarIntersectionObserver(state) {
+    if (state.intersectionObserver) {
+        return;
+    }
+
+    state.intersectionObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+            if (entry.isIntersecting || entry.intersectionRatio > 0) {
+                loadCharacterListAvatar(entry.target, state);
+            }
+        }
+    }, {
+        root: null,
+        rootMargin: CHARACTER_LIST_LAZY_AVATAR_ROOT_MARGIN,
+        threshold: 0,
+    });
+}
+
+function scheduleProcessCharacterListAvatars(state) {
+    if (state.processTimer) {
+        clearTimeout(state.processTimer);
+    }
+
+    state.processTimer = setTimeout(() => {
+        state.processTimer = null;
+        processCharacterListAvatars(state);
+    }, 0);
+}
+
+function processCharacterListAvatars(state) {
+    if (!settings.characterListAvatarLazyLoadEnabled || !state.enabled) {
+        return;
+    }
+
+    if (typeof IntersectionObserver !== 'function') {
+        applyNativeCharacterListImageHints();
+        return;
+    }
+
+    if (!state.intersectionObserver) {
+        installCharacterListAvatarIntersectionObserver(state);
+    }
+
+    document.querySelectorAll(AVATAR_LAZY_LOAD_SELECTOR).forEach(img => {
+        deferCharacterListAvatarImage(img, state, { requireListContainer: true, observe: true });
+    });
+}
+
+function deferCharacterListAvatarNode(node, state, { requireListContainer = true, observe = true } = {}) {
+    if (!(node instanceof Element)) {
+        return;
+    }
+
+    if (node instanceof HTMLImageElement) {
+        deferCharacterListAvatarImage(node, state, { requireListContainer, observe });
+    }
+
+    const selector = requireListContainer ? AVATAR_LAZY_LOAD_SELECTOR : AVATAR_LAZY_LOAD_RELATIVE_SELECTOR;
+    node.querySelectorAll?.(selector).forEach(img => {
+        deferCharacterListAvatarImage(img, state, { requireListContainer, observe });
+    });
+}
+
+function deferCharacterListAvatarImage(img, state, { requireListContainer = true, observe = true } = {}) {
+    if (!(img instanceof HTMLImageElement)) {
+        return;
+    }
+
+    if (requireListContainer && !img.matches(AVATAR_LAZY_LOAD_SELECTOR)) {
+        return;
+    }
+
+    if (!requireListContainer && !img.matches(AVATAR_LAZY_LOAD_RELATIVE_SELECTOR)) {
+        return;
+    }
+
+    const pendingSrc = img.dataset[CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY];
+
+    if (pendingSrc) {
+        observeCharacterListAvatar(img, state, observe);
+        return;
+    }
+
+    const src = img.getAttribute('src') || '';
+
+    if (!isCharacterListAvatarThumbnailUrl(src)) {
+        applyCharacterListImageHints(img);
+        return;
+    }
+
+    img.dataset[CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY] = src;
+    img.setAttribute('src', CHARACTER_LIST_LAZY_AVATAR_PLACEHOLDER_SRC);
+    img.classList.add(CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS);
+    img.classList.remove(CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS);
+    img.closest('.avatar')?.classList.add(CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS);
+    applyCharacterListImageHints(img);
+    observeCharacterListAvatar(img, state, observe);
+}
+
+function observeCharacterListAvatar(img, state, observe) {
+    if (!observe || !state?.intersectionObserver || !document.documentElement.contains(img)) {
+        return;
+    }
+
+    state.intersectionObserver.observe(img);
+}
+
+function loadCharacterListAvatar(target, state = getCharacterListAvatarLazyLoadState()) {
+    if (!(target instanceof HTMLImageElement)) {
+        return;
+    }
+
+    const src = target.dataset[CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY];
+
+    if (!src) {
+        state?.intersectionObserver?.unobserve(target);
+        return;
+    }
+
+    state?.intersectionObserver?.unobserve(target);
+    target.dataset[CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY] = '';
+    delete target.dataset[CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY];
+    target.classList.remove(CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS);
+    target.classList.add(CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS);
+    target.closest('.avatar')?.classList.remove(CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS);
+    target.setAttribute('src', src);
+    applyCharacterListImageHints(target);
+}
+
+function restorePendingCharacterListAvatars() {
+    const datasetSelector = `img[data-${toKebabCase(CHARACTER_LIST_LAZY_AVATAR_SRC_DATASET_KEY)}]`;
+    document.querySelectorAll(datasetSelector).forEach(img => loadCharacterListAvatar(img));
+    document.querySelectorAll(`.${CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS}`).forEach(img => {
+        img.classList.remove(CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS);
+    });
+    document.querySelectorAll(`.${CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS}`).forEach(element => {
+        element.classList.remove(CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS);
+    });
+}
+
+function applyNativeCharacterListImageHints() {
+    document.querySelectorAll(AVATAR_LAZY_LOAD_SELECTOR).forEach(img => {
+        if (img instanceof HTMLImageElement) {
+            applyCharacterListImageHints(img);
+        }
+    });
+}
+
+function applyCharacterListImageHints(img) {
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.setAttribute('fetchpriority', 'low');
+}
+
+function isCharacterListAvatarThumbnailUrl(src) {
+    if (!src || src === CHARACTER_LIST_LAZY_AVATAR_PLACEHOLDER_SRC) {
+        return false;
+    }
+
+    try {
+        const url = new URL(src, location.origin);
+        const type = url.searchParams.get('type');
+        return url.origin === location.origin
+            && url.pathname === '/thumbnail'
+            && (type === 'avatar' || type === 'persona')
+            && url.searchParams.has('file');
+    } catch {
+        return false;
+    }
+}
+
+function installCharacterListAvatarLazyLoadStyle() {
+    let style = document.getElementById(CHARACTER_LIST_AVATAR_LAZY_LOAD_STYLE_ID);
+
+    if (!style) {
+        style = document.createElement('style');
+        style.id = CHARACTER_LIST_AVATAR_LAZY_LOAD_STYLE_ID;
+        document.head.append(style);
+    }
+
+    style.textContent = `
+${CHARACTER_LIST_SELECTOR} .character_select {
+    content-visibility: auto;
+    contain-intrinsic-size: 72px;
+}
+
+${PERSONA_LIST_SELECTOR} .avatar-container,
+${WELCOME_RECENT_CHAT_SELECTOR} {
+    content-visibility: auto;
+    contain-intrinsic-size: 72px;
+}
+
+body.charListGrid ${CHARACTER_LIST_SELECTOR} .character_select {
+    contain-intrinsic-size: 160px 120px;
+}
+
+${CHARACTER_LIST_SELECTOR} .${CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS},
+${PERSONA_LIST_SELECTOR} .${CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS},
+${WELCOME_RECENT_CHAT_SELECTOR} .${CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS} {
+    background: var(--SmartThemeBlurTintColor);
+}
+
+${CHARACTER_LIST_SELECTOR} img.${CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS},
+${PERSONA_LIST_SELECTOR} img.${CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS},
+${WELCOME_RECENT_CHAT_SELECTOR} img.${CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS} {
+    opacity: 0.01;
+}
+
+${CHARACTER_LIST_SELECTOR} img.${CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS},
+${PERSONA_LIST_SELECTOR} img.${CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS},
+${WELCOME_RECENT_CHAT_SELECTOR} img.${CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS} {
+    opacity: 1;
+    transition: opacity 120ms ease;
+}
+`;
+}
+
+function removeCharacterListAvatarLazyLoadStyle() {
+    document.getElementById(CHARACTER_LIST_AVATAR_LAZY_LOAD_STYLE_ID)?.remove();
+}
+
 function shouldDeferWorldInfoCharacterFilterAppend(targets, args) {
     if (!settings.worldInfoDrawerOptimizationEnabled) {
         return false;
@@ -8361,6 +8867,137 @@ function isPowerUserResizeHandler(handler) {
     return source.includes('adjustAutocompleteDebounced')
         && source.includes('setHotswapsDebounced')
         && source.includes('power_user.movingUIState');
+}
+
+function installFastCharacterListFetchHook() {
+    const existing = globalThis[FAST_CHARACTER_LIST_FETCH_KEY];
+    if (existing?.wrappedFetch) {
+        existing.isEnabled = () => settings.fastCharacterListEnabled !== false;
+        return existing;
+    }
+
+    const originalFetch = globalThis.fetch;
+
+    if (typeof originalFetch !== 'function') {
+        return null;
+    }
+
+    const state = {
+        originalFetch: originalFetch.bind(globalThis),
+        wrappedFetch: null,
+        isEnabled: () => settings.fastCharacterListEnabled !== false,
+    };
+
+    state.wrappedFetch = async function baiBaiToolkitFastCharacterListFetch(input, init) {
+        try {
+            if (!state.isEnabled()) {
+                return state.originalFetch(input, init);
+            }
+
+            if (!(await isFastCharacterListRequest(input, init))) {
+                return state.originalFetch(input, init);
+            }
+
+            return await fetchFastCharacterList(state.originalFetch, input, init);
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Fast character list path failed; falling back to /api/characters/all`, error);
+            return state.originalFetch(input, init);
+        }
+    };
+
+    state.wrappedFetch[FAST_CHARACTER_LIST_FETCH_KEY] = true;
+    globalThis[FAST_CHARACTER_LIST_FETCH_KEY] = state;
+    globalThis.fetch = state.wrappedFetch;
+    return state;
+}
+
+async function isFastCharacterListRequest(input, init) {
+    const rawUrl = getFetchRequestUrl(input);
+
+    if (!rawUrl || getFetchRequestMethod(input, init) !== 'POST') {
+        return false;
+    }
+
+    try {
+        const url = new URL(rawUrl, location.href);
+        if (url.origin !== location.origin || url.pathname !== '/api/characters/all') {
+            return false;
+        }
+    } catch {
+        return false;
+    }
+
+    const body = await readFetchJsonBody(input, init);
+    return isPlainEmptyObject(body);
+}
+
+async function fetchFastCharacterList(fetchFn, input, init) {
+    const headers = buildFetchHeaders(input, init);
+    const requestHeaders = getRequestHeaders();
+    for (const [key, value] of Object.entries(requestHeaders || {})) {
+        if (!headers.has(key)) {
+            headers.set(key, value);
+        }
+    }
+
+    const fastInit = {
+        ...copyFetchRequestOptions(input, init),
+        ...(init || {}),
+        method: 'POST',
+        headers,
+    };
+    delete fastInit.body;
+
+    const response = await fetchFn('/api/plugins/baibaoku/v1/characters/fast-all', fastInit);
+    if (!response?.ok) {
+        throw new Error(`Unexpected status ${response?.status || 'unknown'}`);
+    }
+
+    const data = await response.clone().json().catch(() => null);
+    if (!Array.isArray(data)) {
+        throw new Error('Fast character list returned a non-array payload');
+    }
+
+    return response;
+}
+
+async function readFetchJsonBody(input, init) {
+    if (Object.prototype.hasOwnProperty.call(init || {}, 'body')) {
+        const body = init.body;
+        if (typeof body === 'string') {
+            return parseJsonOrNull(body);
+        }
+
+        if (isFetchBlob(body)) {
+            return parseJsonOrNull(await body.text());
+        }
+    }
+
+    if (!isFetchRequest(input) || input.bodyUsed || !input.body) {
+        return null;
+    }
+
+    try {
+        return await input.clone().json().catch(() => null);
+    } catch {
+        return null;
+    }
+}
+
+function parseJsonOrNull(text) {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+function isPlainEmptyObject(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+
+    return Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === 0;
 }
 
 function installSaveRequestGzipFetchHook() {
