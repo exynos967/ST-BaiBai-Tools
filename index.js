@@ -4053,7 +4053,6 @@ function renderRegexVueTeleport(h, vueDraggableNext, Teleport, Transition, model
 
 function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
     const list = model.lists[typeKey];
-    const hasRealGroups = list.groups.some(group => !group.isUngrouped && !group.isPendingAssignment);
     const scriptCount = list.groups.reduce((count, group) => count + group.scripts.length, 0);
     const children = [
         renderRegexVueListToolbar(h, model, list),
@@ -4064,7 +4063,7 @@ function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
     }
 
     const groupChildren = list.groups.map(group => {
-        const showGroupHeader = !group.isPendingAssignment && (!group.isUngrouped || hasRealGroups);
+        const showGroupHeader = !group.isPendingAssignment;
         const groupChildren = [];
 
         if (showGroupHeader) {
