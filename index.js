@@ -40,6 +40,7 @@ const BAIBAOKU_STATUS_TIMEOUT_MS = 3000;
 const BAIBAOKU_PANEL_STATUS_CACHE_MS = 5 * 60_000;
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const FAST_CHAT_GET_FETCH_KEY = '__baiBaiToolkitFastChatGetFetchPatched';
+const FAST_CHAT_GET_JQUERY_TRIGGER_GUARD_KEY = '__baiBaiToolkitFastChatGetJQueryTriggerGuardPatched';
 const PERFORMANCE_TRACE_FETCH_KEY = '__baiBaiToolkitPerformanceTraceFetchPatched';
 const TRANSLATE_MESSAGE_UPDATED_OPTIMIZATION_KEY = '__baiBaiToolkitTranslateMessageUpdatedOptimized';
 const CUSTOM_CSS_INPUT_OPTIMIZATION_KEY = '__baiBaiToolkitCustomCssInputOptimized';
@@ -163,8 +164,10 @@ const FAST_CHAT_GET_ACTION_SELECTOR = [
     '#option_regenerate',
     '#option_continue',
     '#option_impersonate',
+    '#option_delete_mes',
     '#mes_continue',
     '#mes_impersonate',
+    '#dialogue_del_mes_ok',
     '#chat .mes_edit',
     '#chat .mes_edit_done',
     '#chat .mes_delete',
@@ -9475,52 +9478,179 @@ function getFastChatGetState() {
 
 function installFastChatGetInteractionGuard() {
     const state = getFastChatGetState();
-    if (state.interactionGuardInstalled) {
-        return;
+
+    installFastChatGetJQueryTriggerGuard();
+
+    if (!state.pointerInteractionGuardInstalled) {
+        state.pointerInteractionGuardInstalled = true;
+
+        const interactionHandler = (event) => {
+            if (!isFastChatGetHydrating()) {
+                return;
+            }
+
+            if (!getFastChatGetBlockedInteractionTarget(event)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            notifyFastChatGetBlocked();
+        };
+
+        for (const eventName of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click']) {
+            document.addEventListener(eventName, interactionHandler, { capture: true });
+        }
+    }
+
+    if (!state.keydownInteractionGuardInstalled) {
+        state.keydownInteractionGuardInstalled = true;
+
+        document.addEventListener('keydown', (event) => {
+            if (!isFastChatGetHydrating()) {
+                return;
+            }
+
+            if (!isFastChatGetBlockedKeydown(event)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            notifyFastChatGetBlocked();
+        }, true);
     }
 
     state.interactionGuardInstalled = true;
+}
 
-    document.addEventListener('click', (event) => {
-        if (!isFastChatGetHydrating()) {
-            return;
+function installFastChatGetJQueryTriggerGuard() {
+    const existing = globalThis[FAST_CHAT_GET_JQUERY_TRIGGER_GUARD_KEY];
+    if (existing?.installed) {
+        return existing;
+    }
+
+    const jQueryPrototype = globalThis.jQuery?.fn || globalThis.$?.fn;
+    if (!jQueryPrototype) {
+        return null;
+    }
+
+    const state = {
+        installed: true,
+        originalTrigger: jQueryPrototype.trigger,
+        originalTriggerHandler: jQueryPrototype.triggerHandler,
+    };
+
+    if (typeof state.originalTrigger === 'function') {
+        jQueryPrototype.trigger = function guardedFastChatGetJQueryTrigger(eventType, ...args) {
+            if (shouldBlockFastChatGetJQueryTrigger(this, eventType)) {
+                notifyFastChatGetBlocked();
+                return this;
+            }
+
+            return state.originalTrigger.call(this, eventType, ...args);
+        };
+    }
+
+    if (typeof state.originalTriggerHandler === 'function') {
+        jQueryPrototype.triggerHandler = function guardedFastChatGetJQueryTriggerHandler(eventType, ...args) {
+            if (shouldBlockFastChatGetJQueryTrigger(this, eventType)) {
+                notifyFastChatGetBlocked();
+                return undefined;
+            }
+
+            return state.originalTriggerHandler.call(this, eventType, ...args);
+        };
+    }
+
+    globalThis[FAST_CHAT_GET_JQUERY_TRIGGER_GUARD_KEY] = state;
+    return state;
+}
+
+function shouldBlockFastChatGetJQueryTrigger(collection, eventType) {
+    if (!isFastChatGetHydrating() || getFastChatGetJQueryTriggerEventType(eventType) !== 'click') {
+        return false;
+    }
+
+    const length = Number(collection?.length || 0);
+    for (let index = 0; index < length; index++) {
+        const element = collection[index];
+        if (element instanceof Element && element.closest(FAST_CHAT_GET_ACTION_SELECTOR)) {
+            return true;
         }
+    }
 
-        const target = event.target instanceof Element
-            ? event.target.closest(FAST_CHAT_GET_ACTION_SELECTOR)
-            : null;
-        const messageMultiClick = event.target instanceof Element
-            && event.detail >= 2
-            && Boolean(event.target.closest('#chat .mes[mesid]'));
+    return false;
+}
 
-        if (!target && !messageMultiClick) {
-            return;
-        }
+function getFastChatGetJQueryTriggerEventType(eventType) {
+    const rawType = typeof eventType === 'string'
+        ? eventType
+        : typeof eventType?.type === 'string'
+            ? eventType.type
+            : '';
 
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        notifyFastChatGetBlocked();
-    }, true);
+    return rawType.split('.')[0];
+}
 
-    document.addEventListener('keydown', (event) => {
-        if (!isFastChatGetHydrating()) {
-            return;
-        }
+function getFastChatGetBlockedInteractionTarget(event) {
+    const target = getFastChatGetEventTargetElement(event);
+    if (!target) {
+        return null;
+    }
 
-        const target = event.target;
-        const isSendEnter = target instanceof HTMLElement
+    const actionTarget = target.closest(FAST_CHAT_GET_ACTION_SELECTOR);
+    if (actionTarget) {
+        return actionTarget;
+    }
+
+    if (Number(event?.detail || 0) >= 2) {
+        return target.closest('#chat .mes[mesid]');
+    }
+
+    return null;
+}
+
+function isFastChatGetBlockedKeydown(event) {
+    const target = getFastChatGetEventTargetElement(event);
+    const key = String(event?.key || '');
+
+    if (key === 'Enter') {
+        const isSendTextareaEnter = target instanceof HTMLElement
             && target.id === 'send_textarea'
-            && event.key === 'Enter'
             && (event.ctrlKey || event.metaKey || !event.shiftKey);
+        const isGenerationShortcut = Boolean(event.ctrlKey || event.metaKey || event.altKey);
 
-        if (!isSendEnter) {
-            return;
-        }
+        return isSendTextareaEnter || isGenerationShortcut;
+    }
 
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        notifyFastChatGetBlocked();
-    }, true);
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        return !isFastChatGetEditableTarget(target);
+    }
+
+    return false;
+}
+
+function isFastChatGetEditableTarget(target) {
+    if (!(target instanceof HTMLElement)) {
+        return false;
+    }
+
+    const tagName = target.tagName?.toUpperCase?.() || '';
+    return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName);
+}
+
+function getFastChatGetEventTargetElement(event) {
+    const target = event?.target;
+    if (target instanceof Element) {
+        return target;
+    }
+
+    if (typeof Node !== 'undefined' && target instanceof Node && target.parentElement) {
+        return target.parentElement;
+    }
+
+    return null;
 }
 
 function isFastChatGetHydrating() {
