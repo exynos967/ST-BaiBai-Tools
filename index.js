@@ -18,6 +18,7 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { isMobile, favsToHotswap } from '../../../RossAscends-mods.js';
 import { getPresetManager } from '../../../preset-manager.js';
 import { power_user } from '../../../power-user.js';
+import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
@@ -27,7 +28,7 @@ import * as presetOptimizations from './presetOptimizations.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.24.10';
+const CURRENT_VERSION = '0.24.12';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -11089,7 +11090,7 @@ function markSaveGenerateDisplayElement(jobId) {
 function handleSaveGenerateJobForCurrentChat(state, job, chatId, reason = 'unknown') {
     if (isSaveGenerateSavedStatus(job.status)) {
         updateSaveGenerateResumeDisplay(state, job);
-        maybeReloadCurrentChatForSaveGenerateJob(job, chatId, reason);
+        maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason);
         return;
     }
 
@@ -11132,7 +11133,7 @@ function updateSaveGenerateResumeDisplay(state, job) {
     }
 
     if (isSaveGenerateSavedStatus(job.status)) {
-        display.complete({ label: '柏宝库生成已保存，正在刷新聊天...', delay: 1500 });
+        display.complete({ label: '柏宝库生成已保存，正在恢复消息...', delay: 1500 });
         scheduleSaveGenerateDisplayCleanup(state, job.id);
         return;
     }
@@ -11179,7 +11180,7 @@ function scheduleSaveGenerateDisplayCleanup(state, jobId) {
 function getSaveGenerateDisplayLabel(job) {
     const status = String(job?.status || '');
     if (isSaveGenerateSavedStatus(status)) {
-        return '柏宝库生成已保存，正在刷新聊天...';
+        return '柏宝库生成已保存，正在恢复消息...';
     }
     if (status === 'failed') {
         return '柏宝库后台生成失败';
@@ -11230,7 +11231,7 @@ function monitorSaveGenerateJob(state, job, chatId, reason = 'unknown') {
         });
 }
 
-function maybeReloadCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown') {
+function maybeRecoverCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown') {
     if (!job?.id || isSaveGenerateJobSeen(job)) {
         return;
     }
@@ -11239,11 +11240,85 @@ function maybeReloadCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown
         return;
     }
 
+    if (isSaveGenerateSendAsRecoverableType(job.save?.type)) {
+        void insertSaveGenerateJobWithSendAs(job, chatId, reason);
+        return;
+    }
+
     markSaveGenerateJobSeen(job);
-    console.debug(`${LOG_PREFIX} save-generate saved while page was away; reloading chat job=${job.id} reason=${reason}`);
+    console.debug(`${LOG_PREFIX} save-generate saved non-normal job while page was away; reloading chat job=${job.id} reason=${reason}`);
     void reloadCurrentChat().catch(error => {
         console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
     });
+}
+
+async function insertSaveGenerateJobWithSendAs(job, chatId, reason = 'unknown') {
+    if (!job?.id || isSaveGenerateJobSeen(job)) {
+        return;
+    }
+
+    const text = String(job.savedMessage?.mes ?? job.resultText ?? '');
+    if (!text) {
+        markSaveGenerateJobSeen(job);
+        console.debug(`${LOG_PREFIX} save-generate saved empty job; reloading chat job=${job.id} reason=${reason}`);
+        await reloadCurrentChat().catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
+        });
+        return;
+    }
+
+    if (isCurrentSaveGenerateMessageAlreadyInserted(job)) {
+        markSaveGenerateJobSeen(job);
+        return;
+    }
+
+    const name = String(job.savedMessage?.name || characters?.[this_chid]?.name || job.save?.ch_name || scriptModule.name2 || '').trim();
+    if (!name) {
+        markSaveGenerateJobSeen(job);
+        console.debug(`${LOG_PREFIX} save-generate could not resolve character name; reloading chat job=${job.id} reason=${reason}`);
+        await reloadCurrentChat().catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
+        });
+        return;
+    }
+
+    try {
+        console.debug(`${LOG_PREFIX} save-generate saved while page was away; inserting with sendas job=${job.id} reason=${reason}`);
+        await sendMessageAs({ name, return: 'none' }, text);
+        markSaveGenerateJobSeen(job);
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} save-generate sendas recovery failed; reloading chat job=${job.id}`, error);
+        markSaveGenerateJobSeen(job);
+        await reloadCurrentChat().catch(reloadError => {
+            console.debug(`${LOG_PREFIX} save-generate chat reload failed`, reloadError);
+        });
+    }
+}
+
+function isCurrentSaveGenerateMessageAlreadyInserted(job) {
+    const messages = scriptModule.chat;
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return false;
+    }
+
+    const expectedText = String(job.savedMessage?.mes ?? job.resultText ?? '');
+    if (!expectedText) {
+        return false;
+    }
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (!message || message.chat_metadata) {
+            continue;
+        }
+        return message.is_user !== true && String(message.mes ?? '') === expectedText;
+    }
+
+    return false;
+}
+
+function isSaveGenerateSendAsRecoverableType(type) {
+    return ['normal', 'regenerate'].includes(String(type || 'normal'));
 }
 
 function isSaveGenerateTerminalStatus(status) {
