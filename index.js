@@ -21,12 +21,13 @@ import { power_user } from '../../../power-user.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
+import { StreamingDisplay } from '../../../streaming-display.js';
 import * as chatOptimizations from './chatOptimizations.js';
 import * as presetOptimizations from './presetOptimizations.js';
 
 const LOG_PREFIX = '[柏宝箱]';
 const MODULE_NAME = getModuleName();
-const CURRENT_VERSION = '0.24.0';
+const CURRENT_VERSION = '0.24.5';
 const EXTENSION_ID = getExtensionId();
 const SETTINGS_KEY = 'baiBaiToolkit';
 const EXTENSION_KEY = '__baiBaiToolkitExtensionInstalled';
@@ -36,8 +37,19 @@ const BAIBAOKU_EARLY_BRIDGE_KEY = '__baibaokuEarlyBridge';
 const BAIBAOKU_STATUS_URL = '/api/plugins/baibaoku/v1/status';
 const BAIBAOKU_FAST_CONFIG_URL = '/api/plugins/baibaoku/v1/fast-config';
 const BAIBAOKU_FAST_CHAT_GET_URL = '/api/plugins/baibaoku/v1/chats/fast-get';
+const BAIBAOKU_SAVE_GENERATE_URL = '/api/plugins/baibaoku/v1/chats/save-generate';
 const BAIBAOKU_STATUS_TIMEOUT_MS = 3000;
 const BAIBAOKU_PANEL_STATUS_CACHE_MS = 5 * 60_000;
+const SAVE_GENERATE_FETCH_KEY = '__baiBaiToolkitSaveGenerateFetchPatched';
+const SAVE_GENERATE_PATH = '/api/backends/chat-completions/generate';
+const SAVE_GENERATE_SAVE_PATH = '/api/chats/save';
+const SAVE_GENERATE_STATUS_HEADER = 'x-baibaoku-save-generate-status';
+const SAVE_GENERATE_JOB_ID_HEADER = 'x-baibaoku-save-generate-job-id';
+const SAVE_GENERATE_POLL_INTERVAL_MS = 500;
+const SAVE_GENERATE_POLL_TIMEOUT_MS = 90_000;
+const SAVE_GENERATE_RESUME_CHECK_DELAY_MS = 250;
+const SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS = 1500;
+const SAVE_GENERATE_SEEN_STORAGE_PREFIX = 'bai_bai_toolkit_save_generate_seen';
 const SAVE_REQUEST_GZIP_FETCH_KEY = '__baiBaiToolkitSaveRequestGzipFetchPatched';
 const FAST_CHAT_GET_FETCH_KEY = '__baiBaiToolkitFastChatGetFetchPatched';
 const FAST_CHAT_GET_JQUERY_TRIGGER_GUARD_KEY = '__baiBaiToolkitFastChatGetJQueryTriggerGuardPatched';
@@ -243,6 +255,7 @@ const defaultSettings = {
     fastCharacterListEnabled: true,
     recentChatListAccelerationEnabled: true,
     progressiveChatLoadingEnabled: false,
+    saveGenerateEnabled: true,
     tokenizerBulkCountEnabled: true,
     extensionManifestBundleEnabled: true,
     characterListAvatarLazyLoadEnabled: true,
@@ -314,6 +327,7 @@ disableFastSettingsBootstrapFetchHook();
 disableFastCharacterListFetchHook();
 installSaveRequestGzipFetchHook();
 installPerformanceTraceFetchHook();
+installSaveGenerateFetchHook();
 chatOptimizations.observeChatManagementPopupCleanup();
 applyFeatureSettings();
 jQuery(renderSettingsPanel);
@@ -2203,6 +2217,14 @@ async function renderSettingsPanel() {
             }
         });
 
+    $('#bai_bai_toolkit_save_generate_enabled')
+        .prop('checked', settings.saveGenerateEnabled)
+        .on('input', function () {
+            settings.saveGenerateEnabled = Boolean($(this).prop('checked'));
+            saveExtensionSettings();
+            applyBaibaokuPanelLocalState(container);
+        });
+
     $('#bai_bai_toolkit_tokenizer_bulk_count_enabled')
         .prop('checked', settings.tokenizerBulkCountEnabled)
         .on('input', async function () {
@@ -2315,6 +2337,8 @@ function applyBaibaokuPanelLocalState(container) {
         .prop('checked', settings.recentChatListAccelerationEnabled !== false);
     container.find('#bai_bai_toolkit_progressive_chat_loading_enabled')
         .prop('checked', settings.progressiveChatLoadingEnabled === true);
+    container.find('#bai_bai_toolkit_save_generate_enabled')
+        .prop('checked', settings.saveGenerateEnabled !== false);
     container.find('#bai_bai_toolkit_tokenizer_bulk_count_enabled')
         .prop('checked', settings.tokenizerBulkCountEnabled !== false);
 
@@ -10418,6 +10442,689 @@ async function fetchFastCharacterList(fetchFn, input, init) {
     }
 
     return response;
+}
+
+function installSaveGenerateFetchHook() {
+    const existing = globalThis[SAVE_GENERATE_FETCH_KEY];
+    if (existing?.wrappedFetch) {
+        existing.isEnabled = () => settings.saveGenerateEnabled !== false;
+        if (!(existing.monitoredJobIds instanceof Set)) {
+            existing.monitoredJobIds = new Set();
+        }
+        if (!(existing.resumeDisplays instanceof Map)) {
+            existing.resumeDisplays = new Map();
+        }
+        if (!(existing.activeGenerateChatIds instanceof Set)) {
+            existing.activeGenerateChatIds = new Set();
+        }
+        existing.resumeCheckInFlightChatId = String(existing.resumeCheckInFlightChatId || '');
+        existing.lastResumeCheckChatId = String(existing.lastResumeCheckChatId || '');
+        existing.lastResumeCheckAt = Number(existing.lastResumeCheckAt || 0);
+        installSaveGenerateResumeHandlers(existing);
+        queueSaveGenerateResumeCheck(existing, 'existing-hook', 500);
+        return existing;
+    }
+
+    const originalFetch = globalThis.fetch;
+    if (typeof originalFetch !== 'function') {
+        return null;
+    }
+
+    const state = {
+        originalFetch: originalFetch.bind(globalThis),
+        wrappedFetch: null,
+        pendingJobs: [],
+        monitoredJobIds: new Set(),
+        resumeDisplays: new Map(),
+        activeGenerateChatIds: new Set(),
+        resumeCheckTimer: null,
+        resumeCheckInFlightChatId: '',
+        lastResumeCheckChatId: '',
+        lastResumeCheckAt: 0,
+        resumeHandlersInstalled: false,
+        isEnabled: () => settings.saveGenerateEnabled !== false,
+    };
+
+    state.wrappedFetch = async function baiBaiToolkitSaveGenerateFetch(input, init) {
+        try {
+            const skippedSaveResponse = await maybeHandleSaveGenerateSaveRequest(state, input, init);
+            if (skippedSaveResponse) {
+                return skippedSaveResponse;
+            }
+
+            if (!state.isEnabled()) {
+                return state.originalFetch(input, init);
+            }
+
+            const requestInfo = await getSaveGenerateRequestInfo(input, init);
+            if (!requestInfo) {
+                return state.originalFetch(input, init);
+            }
+
+            return await fetchSaveGenerate(state, requestInfo, input, init);
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} save-generate path failed; falling back to native fetch`, error);
+            return state.originalFetch(input, init);
+        }
+    };
+
+    state.wrappedFetch[SAVE_GENERATE_FETCH_KEY] = true;
+    globalThis[SAVE_GENERATE_FETCH_KEY] = state;
+    globalThis.fetch = state.wrappedFetch;
+    installSaveGenerateResumeHandlers(state);
+    queueSaveGenerateResumeCheck(state, 'install', 500);
+    console.debug(`${LOG_PREFIX} save-generate fetch hook installed`);
+    return state;
+}
+
+async function getSaveGenerateRequestInfo(input, init) {
+    const rawUrl = getFetchRequestUrl(input);
+    if (!rawUrl || getFetchRequestMethod(input, init) !== 'POST') {
+        return null;
+    }
+
+    let url;
+    try {
+        url = new URL(rawUrl, location.href);
+    } catch {
+        return null;
+    }
+
+    if (url.origin !== location.origin || url.pathname !== SAVE_GENERATE_PATH) {
+        return null;
+    }
+
+    const skip = (reason, detail = '') => {
+        console.debug(`${LOG_PREFIX} save-generate skipped: ${reason}${detail ? ` (${detail})` : ''}`);
+        return null;
+    };
+
+    if (selected_group) {
+        return skip('group chat is not supported');
+    }
+
+    if (scriptModule.main_api !== 'openai') {
+        return skip('main_api is not chat-completions', String(scriptModule.main_api || 'unknown'));
+    }
+
+    if (settings.saveGenerateEnabled === false) {
+        return skip('setting disabled');
+    }
+
+    const body = await readFetchJsonBody(input, init);
+    if (!isEligibleSaveGenerateBody(body)) {
+        return skip('request body is not eligible', describeSaveGenerateBody(body));
+    }
+
+    const save = getCurrentSaveGenerateDescriptor(body);
+    if (!save) {
+        return skip('current chat identity is unavailable');
+    }
+
+    return { body, save };
+}
+
+function describeSaveGenerateBody(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return typeof body;
+    }
+
+    return [
+        `type=${String(body.type || 'normal')}`,
+        `n=${String(body.n || 1)}`,
+        `source=${String(body.chat_completion_source || '')}`,
+        `tools=${Array.isArray(body.tools) ? body.tools.length : 0}`,
+    ].join(' ');
+}
+
+function isEligibleSaveGenerateBody(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return false;
+    }
+
+    if (!['normal', 'regenerate'].includes(String(body.type || 'normal'))) {
+        return false;
+    }
+
+    if (Number(body.n || 1) > 1) {
+        return false;
+    }
+
+    if (Array.isArray(body.tools) && body.tools.length > 0) {
+        return false;
+    }
+
+    return Boolean(body.chat_completion_source);
+}
+
+function getCurrentSaveGenerateDescriptor(body = null) {
+    if (this_chid === undefined || selected_group) {
+        return null;
+    }
+
+    const character = characters?.[this_chid];
+    if (!character?.avatar || !character?.chat) {
+        return null;
+    }
+
+    const chatId = getCurrentSaveGenerateChatId();
+    if (!chatId) {
+        return null;
+    }
+
+    return {
+        kind: 'character',
+        type: String(body?.type || 'normal'),
+        chatId,
+        avatar_url: character.avatar,
+        file_name: character.chat,
+        ch_name: character.name || '',
+    };
+}
+
+function getCurrentSaveGenerateChatId() {
+    if (selected_group) {
+        return '';
+    }
+
+    return String(getCurrentChatId?.() || characters?.[this_chid]?.chat || '').trim();
+}
+
+async function fetchSaveGenerate(state, requestInfo, input, init) {
+    const headers = buildFetchHeaders(input, init);
+    const requestHeaders = getRequestHeaders();
+    for (const [key, value] of Object.entries(requestHeaders || {})) {
+        if (!headers.has(key)) {
+            headers.set(key, value);
+        }
+    }
+    headers.set('Content-Type', 'application/json');
+
+    const fastInit = {
+        ...copyFetchRequestOptions(input, init),
+        ...(init || {}),
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({
+            save: requestInfo.save,
+            generate: requestInfo.body,
+        }),
+    };
+
+    const activeChatId = String(requestInfo.save?.chatId || '').trim();
+    markSaveGenerateActiveChat(state, activeChatId);
+
+    try {
+        const response = await state.originalFetch(BAIBAOKU_SAVE_GENERATE_URL, fastInit);
+        if (response?.status === 404) {
+            console.debug(`${LOG_PREFIX} save-generate endpoint unavailable; falling back to native generate`);
+            return state.originalFetch(input, init);
+        }
+
+        const jobId = response?.headers?.get(SAVE_GENERATE_JOB_ID_HEADER) || '';
+        if (jobId && response.ok) {
+            console.debug(`${LOG_PREFIX} save-generate intercepted ${requestInfo.save.file_name}; job=${jobId}`);
+            rememberSaveGenerateJob(state, {
+                id: jobId,
+                save: requestInfo.save,
+                status: response.headers.get(SAVE_GENERATE_STATUS_HEADER) || '',
+                createdAt: Date.now(),
+                consumed: false,
+            });
+        }
+
+        return response;
+    } finally {
+        forgetSaveGenerateActiveChat(state, activeChatId);
+    }
+}
+
+function rememberSaveGenerateJob(state, record) {
+    cleanupSaveGenerateRecords(state);
+    state.pendingJobs.push(record);
+}
+
+function markSaveGenerateActiveChat(state, chatId) {
+    if (!state || !chatId) {
+        return;
+    }
+    if (!(state.activeGenerateChatIds instanceof Set)) {
+        state.activeGenerateChatIds = new Set();
+    }
+    state.activeGenerateChatIds.add(chatId);
+}
+
+function forgetSaveGenerateActiveChat(state, chatId) {
+    if (!state || !chatId || !(state.activeGenerateChatIds instanceof Set)) {
+        return;
+    }
+    state.activeGenerateChatIds.delete(chatId);
+}
+
+function cleanupSaveGenerateRecords(state) {
+    const now = Date.now();
+    state.pendingJobs = state.pendingJobs.filter(record => {
+        return record && !record.consumed && now - Number(record.createdAt || 0) < SAVE_GENERATE_POLL_TIMEOUT_MS * 2;
+    });
+}
+
+async function maybeHandleSaveGenerateSaveRequest(state, input, init) {
+    const rawUrl = getFetchRequestUrl(input);
+    if (!rawUrl || getFetchRequestMethod(input, init) !== 'POST') {
+        return null;
+    }
+
+    let url;
+    try {
+        url = new URL(rawUrl, location.href);
+    } catch {
+        return null;
+    }
+
+    if (url.origin !== location.origin || url.pathname !== SAVE_GENERATE_SAVE_PATH) {
+        return null;
+    }
+
+    const body = await readFetchJsonBody(input, init);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return null;
+    }
+
+    cleanupSaveGenerateRecords(state);
+    const record = findMatchingSaveGenerateRecord(state, body);
+    if (!record) {
+        return null;
+    }
+
+    record.consumed = true;
+    const job = await waitSaveGenerateJobTerminal(state, record);
+    cleanupSaveGenerateRecords(state);
+
+    if (job && ['saved', 'already_saved'].includes(job.status)) {
+        console.debug(`${LOG_PREFIX} save-generate saved ${record.save.file_name}; skipping native /api/chats/save`);
+        markSaveGenerateJobSeen(job);
+        return buildSkippedSaveGenerateSaveResponse(job);
+    }
+
+    console.debug(`${LOG_PREFIX} save-generate did not save ${record.save.file_name}; native /api/chats/save will run`, job);
+    return null;
+}
+
+function findMatchingSaveGenerateRecord(state, saveBody) {
+    const avatarUrl = String(saveBody.avatar_url || '');
+    const fileName = String(saveBody.file_name || '');
+    const chName = String(saveBody.ch_name || '');
+
+    for (let index = state.pendingJobs.length - 1; index >= 0; index -= 1) {
+        const record = state.pendingJobs[index];
+        if (!record || record.consumed) {
+            continue;
+        }
+
+        const save = record.save || {};
+        if (String(save.avatar_url || '') !== avatarUrl) {
+            continue;
+        }
+        if (String(save.file_name || '') !== fileName) {
+            continue;
+        }
+        if (save.ch_name && chName && String(save.ch_name) !== chName) {
+            continue;
+        }
+
+        return record;
+    }
+
+    return null;
+}
+
+async function waitSaveGenerateJobTerminal(state, record, { onUpdate = null } = {}) {
+    const terminal = new Set(['saved', 'already_saved', 'conflict', 'failed']);
+    if (terminal.has(record.status)) {
+        onUpdate?.({ id: record.id, status: record.status });
+        return { id: record.id, status: record.status };
+    }
+
+    const deadline = Date.now() + SAVE_GENERATE_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+        const job = await fetchSaveGenerateJobStatus(state.originalFetch, record.id).catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate status polling failed`, error);
+            return null;
+        });
+
+        if (job?.status) {
+            record.status = job.status;
+            onUpdate?.(job);
+        }
+
+        if (job && terminal.has(job.status)) {
+            return job;
+        }
+
+        await delaySaveGeneratePoll(SAVE_GENERATE_POLL_INTERVAL_MS);
+    }
+
+    return { id: record.id, status: 'timeout' };
+}
+
+async function fetchSaveGenerateJobStatus(fetchFn, jobId) {
+    const headers = new Headers(getRequestHeaders());
+    const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/${encodeURIComponent(jobId)}`, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok !== true) {
+        throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+    }
+    return payload.data || null;
+}
+
+function buildSkippedSaveGenerateSaveResponse(job) {
+    return new Response(JSON.stringify({
+        ok: true,
+        skipped: true,
+        baibaokuSaveGenerate: true,
+        jobId: job.id,
+        status: job.status,
+    }), {
+        status: 200,
+        statusText: 'OK',
+        headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'X-Baibaoku-Save-Generate-Skipped': 'true',
+        },
+    });
+}
+
+function delaySaveGeneratePoll(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function installSaveGenerateResumeHandlers(state) {
+    if (!state || state.resumeHandlersInstalled) {
+        return;
+    }
+
+    state.resumeHandlersInstalled = true;
+
+    const queue = reason => queueSaveGenerateResumeCheck(state, reason);
+
+    if (event_types.CHAT_LOADED) {
+        eventSource.on(event_types.CHAT_LOADED, () => queue('chat-loaded'));
+    }
+    if (event_types.CHAT_CHANGED) {
+        eventSource.on(event_types.CHAT_CHANGED, () => queue('chat-changed'));
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'hidden') {
+            queue('visibility');
+        }
+    });
+    window.addEventListener('focus', () => queue('focus'));
+    window.addEventListener('pageshow', () => queue('pageshow'));
+}
+
+function queueSaveGenerateResumeCheck(state, reason = 'unknown', delayMs = SAVE_GENERATE_RESUME_CHECK_DELAY_MS) {
+    if (!state) {
+        return;
+    }
+
+    if (state.resumeCheckTimer) {
+        clearTimeout(state.resumeCheckTimer);
+    }
+
+    state.resumeCheckTimer = setTimeout(() => {
+        state.resumeCheckTimer = null;
+        void checkCurrentSaveGenerateJob(state, reason);
+    }, delayMs);
+}
+
+async function checkCurrentSaveGenerateJob(state, reason = 'unknown') {
+    if (!state?.isEnabled?.() || selected_group) {
+        return;
+    }
+
+    const chatId = getCurrentSaveGenerateChatId();
+    if (!chatId) {
+        return;
+    }
+
+    if (isSaveGenerateActiveLocalChat(state, chatId)) {
+        console.debug(`${LOG_PREFIX} save-generate resume check skipped: current page is generating this chat (${reason})`);
+        return;
+    }
+
+    const now = Date.now();
+    if (state.resumeCheckInFlightChatId === chatId) {
+        console.debug(`${LOG_PREFIX} save-generate resume check skipped: same chat is already checking (${reason})`);
+        return;
+    }
+    if (state.lastResumeCheckChatId === chatId && now - Number(state.lastResumeCheckAt || 0) < SAVE_GENERATE_RESUME_CHECK_COOLDOWN_MS) {
+        console.debug(`${LOG_PREFIX} save-generate resume check skipped: same chat cooldown (${reason})`);
+        return;
+    }
+
+    state.resumeCheckInFlightChatId = chatId;
+    try {
+        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId).catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate resume check failed`, error);
+            return null;
+        });
+
+        state.lastResumeCheckChatId = chatId;
+        state.lastResumeCheckAt = Date.now();
+
+        if (!job?.id) {
+            return;
+        }
+
+        if (isSaveGenerateKnownLocalJob(state, job.id)) {
+            console.debug(`${LOG_PREFIX} save-generate resume check skipped: job is owned by current page job=${job.id} (${reason})`);
+            return;
+        }
+
+        console.debug(`${LOG_PREFIX} save-generate resume check found job=${job.id} status=${job.status} reason=${reason}`);
+        handleSaveGenerateJobForCurrentChat(state, job, chatId, reason);
+    } finally {
+        if (state.resumeCheckInFlightChatId === chatId) {
+            state.resumeCheckInFlightChatId = '';
+        }
+    }
+}
+
+function isSaveGenerateActiveLocalChat(state, chatId) {
+    return Boolean(chatId && state?.activeGenerateChatIds instanceof Set && state.activeGenerateChatIds.has(chatId));
+}
+
+function isSaveGenerateKnownLocalJob(state, jobId) {
+    if (!jobId || !Array.isArray(state?.pendingJobs)) {
+        return false;
+    }
+    cleanupSaveGenerateRecords(state);
+    return state.pendingJobs.some(record => String(record?.id || '') === String(jobId));
+}
+
+async function fetchSaveGenerateJobByChatId(fetchFn, chatId) {
+    const headers = new Headers(getRequestHeaders());
+    const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/pending?chatId=${encodeURIComponent(chatId)}`, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok !== true) {
+        throw new Error(payload?.message || payload?.error?.message || `HTTP ${response.status}`);
+    }
+    return payload.data || null;
+}
+
+function handleSaveGenerateJobForCurrentChat(state, job, chatId, reason = 'unknown') {
+    if (isSaveGenerateSavedStatus(job.status)) {
+        updateSaveGenerateResumeDisplay(state, job);
+        maybeReloadCurrentChatForSaveGenerateJob(job, chatId, reason);
+        return;
+    }
+
+    if (isSaveGenerateTerminalStatus(job.status)) {
+        updateSaveGenerateResumeDisplay(state, job);
+        markSaveGenerateJobSeen(job);
+        return;
+    }
+
+    monitorSaveGenerateJob(state, job, chatId, reason);
+}
+
+function updateSaveGenerateResumeDisplay(state, job) {
+    if (!state || !job?.id || isSaveGenerateJobSeen(job)) {
+        return;
+    }
+
+    if (!(state.resumeDisplays instanceof Map)) {
+        state.resumeDisplays = new Map();
+    }
+
+    let display = state.resumeDisplays.get(job.id);
+    if (!display) {
+        display = new StreamingDisplay();
+        display.show({ label: getSaveGenerateDisplayLabel(job) });
+        state.resumeDisplays.set(job.id, display);
+    } else {
+        display.setLabel(getSaveGenerateDisplayLabel(job));
+    }
+
+    if (job.reasoning) {
+        display.updateReasoning(job.reasoning);
+    }
+    if (job.resultText) {
+        display.updateContent(job.resultText);
+    }
+
+    if (isSaveGenerateSavedStatus(job.status)) {
+        display.complete({ label: '柏宝库生成已保存，正在刷新聊天...', delay: 1500 });
+        scheduleSaveGenerateDisplayCleanup(state, job.id);
+        return;
+    }
+
+    if (isSaveGenerateTerminalStatus(job.status)) {
+        display.markStopped({ label: getSaveGenerateDisplayLabel(job) });
+        scheduleSaveGenerateDisplayCleanup(state, job.id);
+    }
+}
+
+function scheduleSaveGenerateDisplayCleanup(state, jobId) {
+    setTimeout(() => {
+        const display = state?.resumeDisplays?.get(jobId);
+        if (!display || display.isComplete || display.isStopped) {
+            state?.resumeDisplays?.delete(jobId);
+        }
+    }, 5000);
+}
+
+function getSaveGenerateDisplayLabel(job) {
+    const status = String(job?.status || '');
+    if (isSaveGenerateSavedStatus(status)) {
+        return '柏宝库生成已保存，正在刷新聊天...';
+    }
+    if (status === 'failed') {
+        return '柏宝库后台生成失败';
+    }
+    if (status === 'conflict') {
+        return '柏宝库已生成内容，但未能自动保存';
+    }
+    if (status === 'saving') {
+        return '柏宝库正在保存生成内容...';
+    }
+    return '柏宝库后台生成中...';
+}
+
+function monitorSaveGenerateJob(state, job, chatId, reason = 'unknown') {
+    if (!job?.id || state.monitoredJobIds?.has(job.id)) {
+        return;
+    }
+
+    if (!(state.monitoredJobIds instanceof Set)) {
+        state.monitoredJobIds = new Set();
+    }
+
+    state.monitoredJobIds.add(job.id);
+    const record = {
+        id: job.id,
+        save: job.save || { file_name: chatId, chatId },
+        status: job.status || '',
+        createdAt: Date.now(),
+        consumed: false,
+    };
+
+    updateSaveGenerateResumeDisplay(state, job);
+
+    void waitSaveGenerateJobTerminal(state, record, {
+        onUpdate: updatedJob => updateSaveGenerateResumeDisplay(state, updatedJob),
+    })
+        .then(terminalJob => {
+            handleSaveGenerateJobForCurrentChat(state, terminalJob, chatId, `monitor:${reason}`);
+        })
+        .catch(error => {
+            console.debug(`${LOG_PREFIX} save-generate monitor failed`, error);
+        })
+        .finally(() => {
+            state.monitoredJobIds.delete(job.id);
+        });
+}
+
+function maybeReloadCurrentChatForSaveGenerateJob(job, chatId, reason = 'unknown') {
+    if (!job?.id || isSaveGenerateJobSeen(job)) {
+        return;
+    }
+
+    if (getCurrentSaveGenerateChatId() !== String(chatId || '')) {
+        return;
+    }
+
+    markSaveGenerateJobSeen(job);
+    console.debug(`${LOG_PREFIX} save-generate saved while page was away; reloading chat job=${job.id} reason=${reason}`);
+    void reloadCurrentChat().catch(error => {
+        console.debug(`${LOG_PREFIX} save-generate chat reload failed`, error);
+    });
+}
+
+function isSaveGenerateTerminalStatus(status) {
+    return ['saved', 'already_saved', 'conflict', 'failed'].includes(String(status || ''));
+}
+
+function isSaveGenerateSavedStatus(status) {
+    return ['saved', 'already_saved'].includes(String(status || ''));
+}
+
+function getSaveGenerateSeenStorageKey(job) {
+    return `${SAVE_GENERATE_SEEN_STORAGE_PREFIX}:${job?.id || ''}`;
+}
+
+function isSaveGenerateJobSeen(job) {
+    if (!job?.id) {
+        return true;
+    }
+
+    try {
+        return localStorage.getItem(getSaveGenerateSeenStorageKey(job)) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function markSaveGenerateJobSeen(job) {
+    if (!job?.id) {
+        return;
+    }
+
+    try {
+        localStorage.setItem(getSaveGenerateSeenStorageKey(job), '1');
+    } catch {
+        // Ignore storage failures, e.g. private mode quota errors.
+    }
 }
 
 async function readFetchJsonBody(input, init) {
