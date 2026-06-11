@@ -40,6 +40,7 @@ const BAIBAOKU_STATUS_URL = '/api/plugins/baibaoku/v1/status';
 const BAIBAOKU_FAST_CONFIG_URL = '/api/plugins/baibaoku/v1/fast-config';
 const BAIBAOKU_FAST_CHAT_GET_URL = '/api/plugins/baibaoku/v1/chats/fast-get';
 const BAIBAOKU_THEME_GET_URL = '/api/plugins/baibaoku/v1/themes/get';
+const BAIBAOKU_REQUIRED_BACKEND_VERSION = '0.4.1';
 const BAIBAOKU_THEME_LOADING_STYLE_ID = 'bai_bai_toolkit_theme_loading_style';
 const BAIBAOKU_THEME_LOADING_HOST_CLASS = 'bai-bai-toolkit-theme-loading-host';
 const BAIBAOKU_THEME_LOADING_OVERLAY_CLASS = 'bai-bai-toolkit-theme-loading-overlay';
@@ -2946,6 +2947,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
         updateBaibaokuStatusText(driverStatus, driver?.available
             ? `可用${driver.package ? ` (${driver.package})` : ''}`
             : '不可用', Boolean(driver?.available));
+        void maybeShowBaibaokuBackendUpdatePrompt(status);
 
         try {
             const config = await fetchBaibaokuFastConfig();
@@ -3036,6 +3038,35 @@ async function fetchBaibaokuStatus() {
     } finally {
         clearTimeout(timer);
     }
+}
+
+async function maybeShowBaibaokuBackendUpdatePrompt(status) {
+    const version = String(status?.version || '').trim();
+    if (!version || !isVersionGreater(BAIBAOKU_REQUIRED_BACKEND_VERSION, version)) {
+        return;
+    }
+
+    const promptKey = `${version}->${BAIBAOKU_REQUIRED_BACKEND_VERSION}`;
+    if (extensionState.baibaokuBackendUpdatePromptShown === promptKey
+        || extensionState.baibaokuBackendUpdatePromptPromise) {
+        return;
+    }
+
+    extensionState.baibaokuBackendUpdatePromptShown = promptKey;
+    extensionState.baibaokuBackendUpdatePromptPromise = callGenericPopup(`
+        <div class="bai_bai_toolkit_baibaoku_update_prompt">
+            <h3>柏宝库需要更新！</h3>
+            <p>当前版本存在部分BUG，请重启酒馆让柏宝库自动更新到最新版本，注意不是刷新网页，是重启酒馆后台</p>
+        </div>
+    `, POPUP_TYPE.TEXT, '', {
+        okButton: '知道了',
+    }).catch(error => {
+        console.debug(`${LOG_PREFIX} Failed to show BaiBaoKu backend update prompt`, error);
+    }).finally(() => {
+        extensionState.baibaokuBackendUpdatePromptPromise = null;
+    });
+
+    await extensionState.baibaokuBackendUpdatePromptPromise;
 }
 
 async function fetchBaibaokuFastConfig() {
