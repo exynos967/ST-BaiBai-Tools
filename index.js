@@ -12037,7 +12037,10 @@ async function runCurrentSaveGenerateJobCheck(state, chatId, reason = 'unknown',
         const effectiveLastMessageHash = typeof lastMessageHash === 'string'
             ? lastMessageHash
             : getCurrentSaveGenerateLastMessageHash();
-        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId, effectiveLastMessageHash).catch(error => {
+        const job = await fetchSaveGenerateJobByChatId(state.originalFetch, chatId, {
+            lastMessageHash: effectiveLastMessageHash,
+            lastMessageInfo: getCurrentSaveGenerateLastMessageInfo(),
+        }).catch(error => {
             console.debug(`${LOG_PREFIX} save-generate resume check failed`, error);
             return null;
         });
@@ -12334,11 +12337,15 @@ function markSaveGenerateLocalJobConsumed(state, jobId) {
     cleanupSaveGenerateRecords(state);
 }
 
-async function fetchSaveGenerateJobByChatId(fetchFn, chatId, lastMessageHash = '') {
+async function fetchSaveGenerateJobByChatId(fetchFn, chatId, { lastMessageHash = '', lastMessageInfo = null } = {}) {
     const headers = new Headers(getRequestHeaders());
     const query = new URLSearchParams({ chatId });
     if (lastMessageHash) {
         query.set('lastMessageHash', lastMessageHash);
+    }
+    if (lastMessageInfo && Number.isInteger(lastMessageInfo.floor) && lastMessageInfo.floor >= 0) {
+        query.set('lastMessageFloor', String(lastMessageInfo.floor));
+        query.set('lastMessageRole', lastMessageInfo.role || '');
     }
     const response = await fetchFn(`${BAIBAOKU_SAVE_GENERATE_URL}/pending?${query.toString()}`, {
         method: 'GET',
@@ -12353,8 +12360,20 @@ async function fetchSaveGenerateJobByChatId(fetchFn, chatId, lastMessageHash = '
 }
 
 function getCurrentSaveGenerateLastMessageHash() {
+    return getCurrentSaveGenerateLastMessageInfo().hash;
+}
+
+function getCurrentSaveGenerateLastMessageInfo() {
     const tail = getCurrentSaveGenerateChatTailMessage();
-    return tail?.message ? makeSaveGenerateMessageContentHash(tail.message.mes ?? '', tail.floor) : '';
+    if (!tail?.message) {
+        return { hash: '', floor: -1, role: '' };
+    }
+
+    return {
+        hash: makeSaveGenerateMessageContentHash(tail.message.mes ?? '', tail.floor),
+        floor: tail.floor,
+        role: tail.message.is_user === true ? 'user' : 'assistant',
+    };
 }
 
 function makeSaveGenerateMessageContentHash(value, floor) {
@@ -12878,7 +12897,11 @@ function isCurrentSaveGenerateMessageAlreadyInserted(job) {
 
     const savedFloor = Number.isInteger(job.savedMessageFloor) ? job.savedMessageFloor : -1;
     const tail = getCurrentSaveGenerateChatTailMessage();
-    if (tail?.message && Number.isInteger(savedFloor) && savedFloor >= 0 && tail.floor > savedFloor) {
+    if (tail?.message
+        && tail.message.is_user !== true
+        && Number.isInteger(savedFloor)
+        && savedFloor >= 0
+        && tail.floor >= savedFloor) {
         return true;
     }
 
