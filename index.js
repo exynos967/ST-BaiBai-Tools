@@ -347,6 +347,7 @@ const defaultSettings = {
     presetMobileWholeRowDragEnabled: false,
     presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
+    presetGroupingEnabled: true,
     presetPromptCodeMirrorEditorEnabled: true,
     presetAutoSaveAfterPromptEditEnabled: false,
     presetPromptGroups: {},
@@ -3233,6 +3234,7 @@ function applyFeatureSettings() {
     applyCustomCssInputOptimization();
     presetOptimizations.applyPresetScrollOptimization();
     presetOptimizations.applyPresetDragOptimization();
+    presetOptimizations.applyPresetGrouping();
     presetOptimizations.applyPresetSwitchOptimization();
     presetOptimizations.applyPresetToggleOptimization();
     presetOptimizations.applyPresetPromptCodeMirrorEditorOptimization();

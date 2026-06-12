@@ -169,6 +169,14 @@ export function bindPresetOptimizationSettings({ saveSettings } = {}) {
             applyPresetSaveOptimization();
         });
 
+    $('#bai_bai_toolkit_preset_grouping_enabled')
+        .prop('checked', settings.presetGroupingEnabled !== false)
+        .on('input', function () {
+            settings.presetGroupingEnabled = Boolean($(this).prop('checked'));
+            persistSettings();
+            applyPresetGrouping();
+        });
+
     $('#bai_bai_toolkit_preset_prompt_codemirror_editor_enabled')
         .prop('checked', settings.presetPromptCodeMirrorEditorEnabled)
         .on('input', function () {
@@ -248,44 +256,93 @@ function applyPresetDragOptimization() {
     if (!settings.presetDragOptimizationEnabled) {
         cancelPromptManagerCustomDragPending();
         finishPromptManagerCustomDrag({ cancelled: true });
-        clearPromptManagerCustomDragList();
-        removePresetVuePromptListManager();
+        removePresetDragOptimizationHandlers();
 
-        const handlers = extensionState[PRESET_DRAG_HANDLER_KEY];
-
-        if (handlers) {
-            document.removeEventListener('pointerdown', handlers.pointerdown, true);
-            document.removeEventListener('mousedown', handlers.mousedown, true);
-            document.removeEventListener('touchstart', handlers.touchstart, true);
-            document.removeEventListener('click', handlers.click, true);
-            delete extensionState[PRESET_DRAG_HANDLER_KEY];
+        if (isPresetGroupingEnabled()) {
+            applyPresetDragOptimizationCss();
+        } else {
+            clearPromptManagerCustomDragList();
+            applyPresetDragOptimizationCss();
+            restorePromptManagerStockDraggable();
         }
-
-        restorePromptManagerStockDraggable();
         return;
     }
 
     cancelPromptManagerCustomDragPending();
     finishPromptManagerCustomDrag({ cancelled: true });
 
-    const handlers = extensionState[PRESET_DRAG_HANDLER_KEY];
-    if (handlers) {
-        document.removeEventListener('pointerdown', handlers.pointerdown, true);
-        document.removeEventListener('mousedown', handlers.mousedown, true);
-        document.removeEventListener('touchstart', handlers.touchstart, true);
-        document.removeEventListener('click', handlers.click, true);
-        delete extensionState[PRESET_DRAG_HANDLER_KEY];
+    patchPromptManagerDraggable();
+    applyPresetDragOptimizationCss();
+
+    if (isPresetGroupingEnabled()) {
+        removePresetDragOptimizationHandlers();
+        return;
     }
 
+    installPresetDragOptimizationHandlers();
+    preparePromptManagerCustomDragList();
+}
+
+function applyPresetGrouping() {
+    if (!isPresetGroupingEnabled()) {
+        removePresetVuePromptListManager();
+        applyPresetDragOptimizationCss();
+
+        if (settings.presetDragOptimizationEnabled) {
+            applyPresetDragOptimization();
+        } else {
+            restorePromptManagerStockDraggable();
+        }
+        return;
+    }
+
+    removePresetDragOptimizationHandlers();
     patchPromptManagerDraggable();
     applyPresetDragOptimizationCss();
     void installPresetVuePromptListManager();
 }
 
+function isPresetGroupingEnabled() {
+    return settings.presetGroupingEnabled !== false;
+}
+
+function installPresetDragOptimizationHandlers() {
+    if (extensionState[PRESET_DRAG_HANDLER_KEY]) {
+        return;
+    }
+
+    const handlers = {
+        pointerdown: handlePresetPromptDragPointerDown,
+        mousedown: handlePresetPromptDragMouseDown,
+        touchstart: handlePresetPromptDragTouchStart,
+        click: handlePresetPromptDragClick,
+    };
+
+    document.addEventListener('pointerdown', handlers.pointerdown, true);
+    document.addEventListener('mousedown', handlers.mousedown, true);
+    document.addEventListener('touchstart', handlers.touchstart, { capture: true, passive: false });
+    document.addEventListener('click', handlers.click, true);
+    extensionState[PRESET_DRAG_HANDLER_KEY] = handlers;
+}
+
+function removePresetDragOptimizationHandlers() {
+    const handlers = extensionState[PRESET_DRAG_HANDLER_KEY];
+
+    if (!handlers) {
+        return;
+    }
+
+    document.removeEventListener('pointerdown', handlers.pointerdown, true);
+    document.removeEventListener('mousedown', handlers.mousedown, true);
+    document.removeEventListener('touchstart', handlers.touchstart, true);
+    document.removeEventListener('click', handlers.click, true);
+    delete extensionState[PRESET_DRAG_HANDLER_KEY];
+}
+
 function applyPresetDragOptimizationCss() {
     const existingStyle = document.getElementById(PRESET_DRAG_STYLE_ID);
 
-    if (!settings.presetDragOptimizationEnabled) {
+    if (!settings.presetDragOptimizationEnabled && !isPresetGroupingEnabled()) {
         existingStyle?.remove();
         return;
     }
@@ -624,7 +681,7 @@ function preparePromptManagerCustomDragList(list = document.querySelector(PRESET
         return false;
     }
 
-    if (!settings.presetDragOptimizationEnabled) {
+    if (!settings.presetDragOptimizationEnabled && !isPresetGroupingEnabled()) {
         list.classList.remove(PRESET_DRAG_READY_CLASS, PRESET_DRAG_ACTIVE_CLASS);
         return false;
     }
@@ -681,7 +738,7 @@ function disablePromptManagerStockSortable(list) {
 }
 
 async function installPresetVuePromptListManager() {
-    if (!settings.presetDragOptimizationEnabled) {
+    if (!isPresetGroupingEnabled()) {
         return;
     }
 
@@ -750,6 +807,12 @@ async function installPresetVuePromptListManager() {
 
 function removePresetVuePromptListManager({ skipRestore = false } = {}) {
     const manager = getPresetVuePromptListManagerState();
+    const shouldRestoreList = !skipRestore && Boolean(
+        manager.app
+        || manager.host?.isConnected
+        || document.querySelector(`.${PRESET_VUE_LIST_HOST_CLASS}`),
+    );
+
     manager.enabled = false;
     clearTimeout(manager.syncTimer);
     manager.syncTimer = null;
@@ -763,7 +826,7 @@ function removePresetVuePromptListManager({ skipRestore = false } = {}) {
     manager.installing = null;
     document.getElementById(PRESET_DRAG_STYLE_ID)?.remove();
 
-    if (!skipRestore) {
+    if (shouldRestoreList) {
         void restorePromptManagerListAfterVueRemove();
     }
 }
@@ -830,7 +893,7 @@ function isPromptManagerReadyForVuePromptList() {
 }
 
 function schedulePresetVuePromptListManagerSync(delayMs = 80) {
-    if (!settings.presetDragOptimizationEnabled) {
+    if (!isPresetGroupingEnabled()) {
         return;
     }
 
@@ -961,10 +1024,29 @@ async function restorePromptManagerListAfterVueRemove() {
 
     try {
         await promptManager.renderPromptManagerListItems();
-        restorePromptManagerStockDraggable();
+        restorePromptManagerDragAfterVueRemove();
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to restore prompt manager list after Vue remove`, error);
     }
+}
+
+function restorePromptManagerDragAfterVueRemove() {
+    if (isPresetGroupingEnabled()) {
+        return;
+    }
+
+    const list = getPromptManagerListElement();
+
+    if (settings.presetDragOptimizationEnabled) {
+        patchPromptManagerDraggable();
+        installPresetDragOptimizationHandlers();
+        preparePromptManagerCustomDragList(list);
+        return;
+    }
+
+    removePresetDragOptimizationHandlers();
+    clearPromptManagerCustomDragList();
+    restorePromptManagerStockDraggable();
 }
 
 function installPresetVuePromptListRenderPatch() {
@@ -989,7 +1071,7 @@ function installPresetVuePromptListRenderPatch() {
 
     const originalRenderPromptManagerListItems = promptManager.renderPromptManagerListItems;
     const patchedRenderPromptManagerListItems = async function (...args) {
-        if (!settings.presetDragOptimizationEnabled) {
+        if (!isPresetGroupingEnabled()) {
             return originalRenderPromptManagerListItems.apply(this, args);
         }
 
@@ -3417,7 +3499,7 @@ async function renderPromptManagerListWithoutTokenStats() {
 }
 
 async function renderPromptManagerListItemsFast() {
-    if (settings.presetDragOptimizationEnabled) {
+    if (isPresetGroupingEnabled()) {
         await installPresetVuePromptListManager();
 
         if (syncPresetVuePromptListManagerState()) {
@@ -5174,6 +5256,7 @@ function removePresetPromptCodeMirrorEditorStyle() {
 
 export {
     applyPresetDragOptimization,
+    applyPresetGrouping,
     applyPresetPromptCodeMirrorEditorOptimization,
     applyPresetSaveOptimization,
     applyPresetScrollOptimization,
