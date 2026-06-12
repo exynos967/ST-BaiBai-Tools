@@ -31,7 +31,9 @@ const PRESET_VUE_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
 const PRESET_VUE_DRAGGABLE_MODULE_PATH = './vendor/vue-draggable-next.esm-browser.prod.js';
 const PRESET_VUE_HEADER_ENTRY_ID = '__bai_bai_preset_header';
 const PRESET_VUE_SEPARATOR_ENTRY_ID = '__bai_bai_preset_separator';
-const PRESET_VUE_COLLAPSE_ANIMATION_MS = 180;
+const PRESET_VUE_EXPAND_ANIMATION_MS = 180;
+const PRESET_VUE_COLLAPSE_ANIMATION_MS = 260;
+const PRESET_VUE_DRAG_ANIMATION_MS = 180;
 const PRESET_DRAG_LONG_PRESS_MS = 300;
 const PRESET_DRAG_CANCEL_DISTANCE_PX = 12;
 const PRESET_DRAG_CLICK_SUPPRESS_MS = 500;
@@ -321,11 +323,12 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     padding: 0;
     border: 0;
     background: transparent;
-    transition: gap ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease;
+    transition: gap ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed {
     gap: 0;
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-header {
@@ -364,15 +367,22 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body {
     display: grid;
     grid-template-rows: 1fr;
+    min-height: 0;
     opacity: 1;
     overflow: hidden;
-    transition: grid-template-rows ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms ease;
+    transition: grid-template-rows ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed .bai-bai-preset-group-body {
     grid-template-rows: 0fr;
     opacity: 0;
     pointer-events: none;
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body-inner {
+    min-height: 0;
+    overflow: hidden;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
@@ -1090,7 +1100,7 @@ function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
         draggable: 'li.completion_prompt_manager_prompt_draggable, li.bai-bai-preset-group',
         filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
         preventOnFilter: false,
-        animation: PRESET_VUE_COLLAPSE_ANIMATION_MS,
+        animation: PRESET_VUE_DRAG_ANIMATION_MS,
         forceFallback: true,
         fallbackOnBody: true,
         fallbackClass: 'bai-bai-preset-vue-sortable-fallback',
@@ -1217,7 +1227,7 @@ function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
         draggable: 'li.completion_prompt_manager_prompt_draggable',
         filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
         preventOnFilter: false,
-        animation: PRESET_VUE_COLLAPSE_ANIMATION_MS,
+        animation: PRESET_VUE_DRAG_ANIMATION_MS,
         forceFallback: true,
         fallbackOnBody: true,
         fallbackClass: 'bai-bai-preset-vue-sortable-fallback',
@@ -1305,9 +1315,11 @@ function renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProp
         class: 'bai-bai-preset-group-body',
         'aria-hidden': item.collapsed ? 'true' : 'false',
     }, [
-        h(vueDraggableNext.VueDraggableNext, draggableProps, {
-            default: () => (item.children ?? []).map(child => renderPresetVuePromptRow(h, child)),
-        }),
+        h('div', { class: 'bai-bai-preset-group-body-inner' }, [
+            h(vueDraggableNext.VueDraggableNext, draggableProps, {
+                default: () => (item.children ?? []).map(child => renderPresetVuePromptRow(h, child)),
+            }),
+        ]),
     ]);
 }
 
@@ -1688,8 +1700,17 @@ function togglePresetVuePromptGroupCollapsed(groupId) {
     }
 
     group.collapsed = !group.collapsed;
+    const modelGroup = getPresetVuePromptListManagerState().state?.items?.find(item => item?.type === 'group' && item.groupId === groupId);
+
+    if (modelGroup) {
+        modelGroup.collapsed = group.collapsed;
+
+        if (modelGroup.group) {
+            modelGroup.group.collapsed = group.collapsed;
+        }
+    }
+
     savePresetPromptGroupSettings();
-    syncPresetVuePromptListManagerState();
 }
 
 async function renamePresetVuePromptGroup(groupId) {
