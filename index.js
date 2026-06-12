@@ -22,7 +22,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.25.3';
+const CURRENT_VERSION = '0.25.5';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -347,6 +347,7 @@ const defaultSettings = {
     presetMobileWholeRowDragEnabled: false,
     presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
+    presetGroupingEnabled: true,
     presetPromptCodeMirrorEditorEnabled: true,
     presetAutoSaveAfterPromptEditEnabled: false,
     regexQuickOperationOptimizationEnabled: true,
@@ -386,6 +387,7 @@ presetOptimizations.configurePresetOptimizations({
     logPrefix: LOG_PREFIX,
     loadCodeMirrorModules: loadDescriptionCodeMirrorModules,
     codeMirrorHistoryMaxLength: DESCRIPTION_CODEMIRROR_HISTORY_MAX_LENGTH,
+    saveSettings: saveExtensionSettings,
 });
 presetOptimizations.installOpenAITokenizerBulkBridge();
 
@@ -3231,6 +3233,7 @@ function applyFeatureSettings() {
     applyCustomCssInputOptimization();
     presetOptimizations.applyPresetScrollOptimization();
     presetOptimizations.applyPresetDragOptimization();
+    presetOptimizations.applyPresetGrouping();
     presetOptimizations.applyPresetSwitchOptimization();
     presetOptimizations.applyPresetToggleOptimization();
     presetOptimizations.applyPresetPromptCodeMirrorEditorOptimization();

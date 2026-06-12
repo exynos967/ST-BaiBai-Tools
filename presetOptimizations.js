@@ -1,12 +1,13 @@
 import { event_types, eventSource, getRequestHeaders, saveSettingsDebounced } from '../../../../script.js';
 import { oai_settings, openai_setting_names, promptManager } from '../../../openai.js';
+import { getPresetManager } from '../../../preset-manager.js';
 import { getTokenizerModel } from '../../../tokenizers.js';
 import { t } from '../../../i18n.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 import { INJECTION_POSITION } from '../../../PromptManager.js';
 import { isMobile } from '../../../RossAscends-mods.js';
 import { renderTemplateAsync } from '../../../templates.js';
-import { debounce, escapeHtml, getStringHash } from '../../../utils.js';
+import { debounce, escapeHtml, getStringHash, uuidv4 } from '../../../utils.js';
 
 const PRESET_PROMPT_CODEMIRROR_EDITOR_KEY = '__baiBaiToolkitPresetPromptCodeMirrorEditor';
 const PRESET_PROMPT_CODEMIRROR_EDITOR_STYLE_ID = 'bai_bai_toolkit_preset_prompt_codemirror_editor_style';
@@ -18,11 +19,40 @@ const PRESET_SWITCH_BEFORE_HANDLER_KEY = '__baiBaiToolkitPresetSwitchBeforeHandl
 const PRESET_SWITCH_HANDLER_KEY = '__baiBaiToolkitPresetSwitchHandler';
 const PRESET_MODEL_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetModelChangeHandler';
 const PRESET_CHAT_LOADED_HANDLER_KEY = '__baiBaiToolkitPresetChatLoadedHandler';
+const PRESET_GROUP_PRESET_DELETED_HANDLER_KEY = '__baiBaiToolkitPresetGroupPresetDeletedHandler';
+const PRESET_GROUP_PRESET_IMPORT_HANDLER_KEY = '__baiBaiToolkitPresetGroupPresetImportHandler';
 const PRESET_SELECT_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetSelectChangeHandler';
 const PRESET_DELETE_HANDLER_KEY = '__baiBaiToolkitPresetDeleteHandler';
 const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
 const PRESET_TOGGLE_HANDLER_KEY = '__baiBaiToolkitPresetToggleHandler';
 const PRESET_SAVE_HANDLER_KEY = '__baiBaiToolkitPresetSaveHandler';
+const PRESET_VUE_LIST_MANAGER_KEY = '__baiBaiToolkitPresetVueListManager';
+const PRESET_VUE_LIST_RENDER_PATCH_KEY = '__baiBaiToolkitPresetVueListRenderPatch';
+const PRESET_VUE_TOUCH_SCROLL_GUARD_KEY = '__baiBaiToolkitPresetVueTouchScrollGuard';
+const PRESET_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY = '__baiBaiToolkitPresetPendingChangesLifecycleHandler';
+const PRESET_VUE_LIST_HOST_CLASS = 'bai-bai-preset-vue-list-host';
+const PRESET_VUE_DRAGGING_BODY_CLASS = 'bai-bai-preset-vue-dragging';
+const PRESET_VUE_DRAG_READY_FEEDBACK_CLASS = 'bai-bai-preset-vue-drag-ready-feedback';
+const PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS = 'bai-bai-preset-top-level-draggable';
+const PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS = 'bai-bai-preset-group-child-draggable';
+const PRESET_VUE_LIST_GAP_VARIABLE = '--bai-bai-preset-list-gap';
+const PRESET_VUE_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
+const PRESET_VUE_DRAGGABLE_MODULE_PATH = './vendor/vue-draggable-next.esm-browser.prod.js';
+const PRESET_VUE_HEADER_ENTRY_ID = '__bai_bai_preset_header';
+const PRESET_VUE_SEPARATOR_ENTRY_ID = '__bai_bai_preset_separator';
+const PRESET_GROUP_EXTENSION_PATH = 'baibaiToolkit.presetPromptGroups';
+const PRESET_COMPAT_ENTRY_GROUPING_EXTENSION_PATH = 'entryGrouping';
+const PRESET_VUE_EXPAND_ANIMATION_MS = 180;
+const PRESET_VUE_COLLAPSE_ANIMATION_MS = 260;
+const PRESET_VUE_DRAG_ANIMATION_MS = 180;
+const PRESET_PENDING_CHANGES_VISIBILITY_CHECK_DELAY_MS = 120;
+const PRESET_PENDING_CHANGES_VISIBILITY_FALLBACK_DELAY_MS = 1000;
+const PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE = 1001;
+const PRESET_VUE_POINTER_START_THRESHOLD_PX = 4;
+const PRESET_VUE_TOUCH_DRAG_DELAY_MS = 320;
+const PRESET_VUE_TOUCH_START_THRESHOLD_PX = 10;
+const PRESET_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX = 6;
+const PRESET_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS = 350;
 const PRESET_DRAG_LONG_PRESS_MS = 300;
 const PRESET_DRAG_CANCEL_DISTANCE_PX = 12;
 const PRESET_DRAG_CLICK_SUPPRESS_MS = 500;
@@ -41,7 +71,7 @@ const PRESET_PROMPT_CODEMIRROR_EDITOR_CLASS = 'bai-bai-toolkit-preset-prompt-cod
 const PRESET_PROMPT_SOURCE_HIDDEN_CLASS = 'bai-bai-toolkit-preset-prompt-source-hidden';
 const PRESET_PROMPT_CODEMIRROR_READONLY_CLASS = 'bai-bai-toolkit-preset-prompt-readonly';
 const PRESET_PROMPT_CODEMIRROR_MAXIMIZED_CLASS = 'bai-bai-toolkit-preset-prompt-maximized';
-const PRESET_DRAG_INTERACTIVE_SELECTOR = '.prompt_manager_prompt_controls, .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action, .prompt-manager-toggle-action, a, button, input, select, textarea, [contenteditable="true"]';
+const PRESET_DRAG_INTERACTIVE_SELECTOR = '.prompt_manager_prompt_controls, .bai-bai-preset-prompt-actions-hint, .bai-bai-preset-prompt-actions, .bai-bai-preset-prompt-action-button, [data-preset-prompt-action], .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action, .prompt-manager-toggle-action, .bai-bai-preset-group-actions, .bai-bai-preset-group-toggle, a, button, input, select, textarea, [contenteditable="true"]';
 const BAIBAOKU_TOKENIZER_BULK_COUNT_URL = '/api/plugins/baibaoku/v1/tokenizers/bulk-count';
 const OPENAI_TOKENIZER_BULK_BRIDGE_KEY = '__baibaokuTokenizerBulkBridge';
 const OPENAI_TOKENIZER_BULK_CACHE_LIMIT = 5000;
@@ -76,13 +106,16 @@ let extensionState = {};
 let LOG_PREFIX = '[BaiBaiToolkit]';
 let loadCodeMirrorModules = null;
 let codeMirrorHistoryMaxLength = 12000;
+let savePresetOptimizationSettings = null;
 
 export function configurePresetOptimizations(context = {}) {
     settings = context.settings ?? settings;
+    delete settings.presetPromptGroups;
     extensionState = context.extensionState ?? extensionState;
     LOG_PREFIX = context.logPrefix ?? LOG_PREFIX;
     loadCodeMirrorModules = context.loadCodeMirrorModules ?? loadCodeMirrorModules;
     codeMirrorHistoryMaxLength = context.codeMirrorHistoryMaxLength ?? codeMirrorHistoryMaxLength;
+    savePresetOptimizationSettings = context.saveSettings ?? savePresetOptimizationSettings;
 }
 
 export function installOpenAITokenizerBulkBridge() {
@@ -103,6 +136,8 @@ export function installOpenAITokenizerBulkBridge() {
 }
 
 export function bindPresetOptimizationSettings({ saveSettings } = {}) {
+    savePresetOptimizationSettings = saveSettings ?? savePresetOptimizationSettings;
+
     const persistSettings = () => {
         if (typeof saveSettings === 'function') {
             saveSettings();
@@ -150,6 +185,14 @@ export function bindPresetOptimizationSettings({ saveSettings } = {}) {
             persistSettings();
             applyPresetToggleOptimization();
             applyPresetSaveOptimization();
+        });
+
+    $('#bai_bai_toolkit_preset_grouping_enabled')
+        .prop('checked', settings.presetGroupingEnabled !== false)
+        .on('input', function () {
+            settings.presetGroupingEnabled = Boolean($(this).prop('checked'));
+            persistSettings();
+            applyPresetGrouping();
         });
 
     $('#bai_bai_toolkit_preset_prompt_codemirror_editor_enabled')
@@ -228,68 +271,389 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} > li.completion_prompt_manager_prompt {
 }
 
 function applyPresetDragOptimization() {
-    patchPromptManagerDraggable();
-    applyPresetDragOptimizationCss();
-
-    const handlers = extensionState[PRESET_DRAG_HANDLER_KEY];
-
     if (!settings.presetDragOptimizationEnabled) {
         cancelPromptManagerCustomDragPending();
         finishPromptManagerCustomDrag({ cancelled: true });
-        clearPromptManagerCustomDragList();
+        removePresetDragOptimizationHandlers();
 
-        if (handlers) {
-            document.removeEventListener('pointerdown', handlers.pointerdown, true);
-            document.removeEventListener('mousedown', handlers.mousedown, true);
-            document.removeEventListener('touchstart', handlers.touchstart, true);
-            document.removeEventListener('click', handlers.click, true);
-            delete extensionState[PRESET_DRAG_HANDLER_KEY];
+        if (isPresetGroupingEnabled()) {
+            applyPresetDragOptimizationCss();
+        } else {
+            clearPromptManagerCustomDragList();
+            applyPresetDragOptimizationCss();
+            restorePromptManagerStockDraggable();
         }
-
-        restorePromptManagerStockDraggable();
         return;
     }
 
-    if (!handlers) {
-        const nextHandlers = {
-            pointerdown: handlePresetPromptDragPointerDown,
-            mousedown: handlePresetPromptDragMouseDown,
-            touchstart: handlePresetPromptDragTouchStart,
-            click: handlePresetPromptDragClick,
-        };
+    cancelPromptManagerCustomDragPending();
+    finishPromptManagerCustomDrag({ cancelled: true });
 
-        extensionState[PRESET_DRAG_HANDLER_KEY] = nextHandlers;
-        document.addEventListener('pointerdown', nextHandlers.pointerdown, true);
-        document.addEventListener('mousedown', nextHandlers.mousedown, true);
-        document.addEventListener('touchstart', nextHandlers.touchstart, { capture: true, passive: false });
-        document.addEventListener('click', nextHandlers.click, true);
+    patchPromptManagerDraggable();
+    applyPresetDragOptimizationCss();
+
+    if (isPresetGroupingEnabled()) {
+        removePresetDragOptimizationHandlers();
+        return;
     }
 
+    installPresetDragOptimizationHandlers();
     preparePromptManagerCustomDragList();
+}
+
+function applyPresetGrouping() {
+    if (!isPresetGroupingEnabled()) {
+        flushPendingPresetPromptChangesSafely();
+        removePresetVuePromptListManager();
+        applyPresetDragOptimizationCss();
+
+        if (settings.presetDragOptimizationEnabled) {
+            applyPresetDragOptimization();
+        } else {
+            restorePromptManagerStockDraggable();
+        }
+        return;
+    }
+
+    removePresetDragOptimizationHandlers();
+    patchPromptManagerDraggable();
+    applyPresetDragOptimizationCss();
+    void installPresetVuePromptListManager();
+}
+
+function isPresetGroupingEnabled() {
+    return settings.presetGroupingEnabled !== false;
+}
+
+function installPresetDragOptimizationHandlers() {
+    if (extensionState[PRESET_DRAG_HANDLER_KEY]) {
+        return;
+    }
+
+    const handlers = {
+        pointerdown: handlePresetPromptDragPointerDown,
+        mousedown: handlePresetPromptDragMouseDown,
+        touchstart: handlePresetPromptDragTouchStart,
+        click: handlePresetPromptDragClick,
+    };
+
+    document.addEventListener('pointerdown', handlers.pointerdown, true);
+    document.addEventListener('mousedown', handlers.mousedown, true);
+    document.addEventListener('touchstart', handlers.touchstart, { capture: true, passive: false });
+    document.addEventListener('click', handlers.click, true);
+    extensionState[PRESET_DRAG_HANDLER_KEY] = handlers;
+}
+
+function removePresetDragOptimizationHandlers() {
+    const handlers = extensionState[PRESET_DRAG_HANDLER_KEY];
+
+    if (!handlers) {
+        return;
+    }
+
+    document.removeEventListener('pointerdown', handlers.pointerdown, true);
+    document.removeEventListener('mousedown', handlers.mousedown, true);
+    document.removeEventListener('touchstart', handlers.touchstart, true);
+    document.removeEventListener('click', handlers.click, true);
+    delete extensionState[PRESET_DRAG_HANDLER_KEY];
 }
 
 function applyPresetDragOptimizationCss() {
     const existingStyle = document.getElementById(PRESET_DRAG_STYLE_ID);
 
-    if (!settings.presetDragOptimizationEnabled) {
+    if (!settings.presetDragOptimizationEnabled && !isPresetGroupingEnabled()) {
         existingStyle?.remove();
         return;
     }
 
     const css = `
-${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_READY_CLASS} > li.completion_prompt_manager_prompt {
+${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_READY_CLASS} li.completion_prompt_manager_prompt {
     user-select: none;
 }
 
-#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_READY_CLASS} > li.completion_prompt_manager_prompt .drag-handle {
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_READY_CLASS} li.completion_prompt_manager_prompt .drag-handle {
     display: flex !important;
     touch-action: none !important;
     cursor: grab !important;
 }
 
-${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} > li.completion_prompt_manager_prompt span span span {
+${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion_prompt_manager_prompt span span span,
+.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt span span span {
     transition: none;
     filter: none;
+}
+
+.${PRESET_VUE_LIST_HOST_CLASS} {
+    display: contents;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-list-head-actions,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-list-head-actions .menu_button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 45%, transparent);
+    overflow: hidden;
+    transition: gap ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed {
+    gap: 0;
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    padding: 10px 7px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 70%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 75%, transparent);
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed .bai-bai-preset-group-header {
+    border-bottom-color: transparent;
+}
+
+@media (pointer: coarse) {
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-drag-surface {
+        touch-action: none !important;
+    }
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: normal;
+    font-size: calc(var(--mainFontSize) * 1);
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-actions {
+    gap: 3px;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-toggle,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-action-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    box-sizing: border-box !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: calc(var(--mainFontSize) * 0.9) !important;
+    line-height: 1 !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-enable-toggle {
+    font-size: calc(var(--mainFontSize) * 1.05) !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-title strong {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-count {
+    flex: 0 0 auto;
+    opacity: 0.65;
+    white-space: nowrap;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt {
+    grid-template-columns: minmax(0, 1fr) max-content max-content !important;
+    column-gap: 6px !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head {
+    grid-template-columns: minmax(0, 1fr) max-content !important;
+    align-items: center !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head .bai-bai-preset-list-head-actions {
+    justify-self: end !important;
+    align-self: center !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head .prompt_manager_prompt_tokens,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt .prompt_manager_prompt_tokens {
+    inline-size: max-content !important;
+    min-inline-size: 2.2em !important;
+    width: auto !important;
+    justify-self: end !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt .prompt_manager_prompt_controls {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    flex-direction: row !important;
+    gap: 4px !important;
+    position: relative;
+    flex-wrap: nowrap !important;
+    white-space: nowrap !important;
+    min-inline-size: max-content !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-icon-button,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-action-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    box-sizing: border-box !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: calc(var(--mainFontSize) * 1) !important;
+    line-height: 1 !important;
+    cursor: pointer !important;
+    white-space: nowrap !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-hint-hidden {
+    display: none !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions {
+    display: none !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 4px !important;
+    flex: 0 0 auto !important;
+    min-inline-size: max-content !important;
+    white-space: nowrap !important;
+    opacity: 0;
+    transition: opacity var(--animation-duration-2x, 160ms) ease-in-out;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-visible {
+    display: inline-flex !important;
+    opacity: 1 !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-action-button.caution {
+    color: var(--SmartThemeEmColor) !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-remove-action,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-copy-action {
+    display: none !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body {
+    display: grid;
+    grid-template-rows: 1fr;
+    min-height: 0;
+    overflow: hidden;
+    transition: grid-template-rows ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed .bai-bai-preset-group-body {
+    grid-template-rows: 0fr;
+    pointer-events: none;
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(${PRESET_VUE_LIST_GAP_VARIABLE}, 6px);
+    margin: 0;
+    padding: var(${PRESET_VUE_LIST_GAP_VARIABLE}, 6px);
+    list-style: none;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list:empty {
+    min-height: 12px;
+    border: 1px dashed color-mix(in srgb, var(--SmartThemeBorderColor) 70%, transparent);
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-selectable {
+    cursor: crosshair !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-selectable * {
+    cursor: crosshair !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-selectable .prompt_manager_prompt_controls {
+    pointer-events: none;
+    opacity: 0.45;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-start,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-end,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-range-inside {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
+        transition: none !important;
+    }
 }
 
 .${PRESET_DRAG_SOURCE_CLASS} {
@@ -312,6 +676,139 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} > li.completi
     cursor: grabbing !important;
 }
 
+.${PRESET_DRAG_CLONE_CLASS}.completion_prompt_manager_prompt,
+.bai-bai-preset-vue-sortable-ghost.completion_prompt_manager_prompt,
+.bai-bai-preset-vue-sortable-fallback.completion_prompt_manager_prompt,
+.bai-bai-preset-vue-sortable-drag.completion_prompt_manager_prompt {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) max-content max-content !important;
+    column-gap: 6px !important;
+    align-items: center !important;
+    padding-left: 20px !important;
+    list-style: none !important;
+    list-style-type: none !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS}.completion_prompt_manager_prompt::marker,
+.bai-bai-preset-vue-sortable-ghost.completion_prompt_manager_prompt::marker,
+.bai-bai-preset-vue-sortable-fallback.completion_prompt_manager_prompt::marker,
+.bai-bai-preset-vue-sortable-drag.completion_prompt_manager_prompt::marker {
+    content: "" !important;
+    font-size: 0 !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .prompt_manager_prompt_controls,
+.bai-bai-preset-vue-sortable-ghost .prompt_manager_prompt_controls,
+.bai-bai-preset-vue-sortable-fallback .prompt_manager_prompt_controls,
+.bai-bai-preset-vue-sortable-drag .prompt_manager_prompt_controls {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    flex-direction: row !important;
+    gap: 4px !important;
+    flex-wrap: nowrap !important;
+    white-space: nowrap !important;
+    min-inline-size: max-content !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .drag-handle,
+.bai-bai-preset-vue-sortable-ghost .drag-handle,
+.bai-bai-preset-vue-sortable-fallback .drag-handle,
+.bai-bai-preset-vue-sortable-drag .drag-handle {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    height: 100% !important;
+    padding: 0 5px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .completion_prompt_manager_prompt_name,
+.bai-bai-preset-vue-sortable-ghost .completion_prompt_manager_prompt_name,
+.bai-bai-preset-vue-sortable-fallback .completion_prompt_manager_prompt_name,
+.bai-bai-preset-vue-sortable-drag .completion_prompt_manager_prompt_name {
+    min-width: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-icon-button,
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-action-button,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-icon-button,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-action-button,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-icon-button,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-action-button,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-icon-button,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-action-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    box-sizing: border-box !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: calc(var(--mainFontSize) * 1) !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS}.completion_prompt_manager_prompt:not(.completion_prompt_manager_prompt_disabled) .prompt-manager-toggle-action,
+.bai-bai-preset-vue-sortable-ghost.completion_prompt_manager_prompt:not(.completion_prompt_manager_prompt_disabled) .prompt-manager-toggle-action,
+.bai-bai-preset-vue-sortable-fallback.completion_prompt_manager_prompt:not(.completion_prompt_manager_prompt_disabled) .prompt-manager-toggle-action,
+.bai-bai-preset-vue-sortable-drag.completion_prompt_manager_prompt:not(.completion_prompt_manager_prompt_disabled) .prompt-manager-toggle-action {
+    color: var(--SmartThemeQuoteColor) !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .prompt_manager_prompt_tokens,
+.bai-bai-preset-vue-sortable-ghost .prompt_manager_prompt_tokens,
+.bai-bai-preset-vue-sortable-fallback .prompt_manager_prompt_tokens,
+.bai-bai-preset-vue-sortable-drag .prompt_manager_prompt_tokens {
+    inline-size: max-content !important;
+    min-inline-size: 2.2em !important;
+    width: auto !important;
+    justify-self: end !important;
+    text-align: right !important;
+    font-size: calc(var(--mainFontSize) * 0.9) !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-actions,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-actions,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-actions,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-actions {
+    display: none !important;
+    opacity: 0 !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .prompt-manager-remove-action,
+.${PRESET_DRAG_CLONE_CLASS} .prompt-manager-copy-action,
+.bai-bai-preset-vue-sortable-ghost .prompt-manager-remove-action,
+.bai-bai-preset-vue-sortable-ghost .prompt-manager-copy-action,
+.bai-bai-preset-vue-sortable-fallback .prompt-manager-remove-action,
+.bai-bai-preset-vue-sortable-fallback .prompt-manager-copy-action,
+.bai-bai-preset-vue-sortable-drag .prompt-manager-remove-action,
+.bai-bai-preset-vue-sortable-drag .prompt-manager-copy-action {
+    display: none !important;
+}
+
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-actions-hint,
+.${PRESET_DRAG_CLONE_CLASS} .bai-bai-preset-prompt-actions-hint-hidden,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-actions-hint,
+.bai-bai-preset-vue-sortable-ghost .bai-bai-preset-prompt-actions-hint-hidden,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-actions-hint,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-prompt-actions-hint-hidden,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-actions-hint,
+.bai-bai-preset-vue-sortable-drag .bai-bai-preset-prompt-actions-hint-hidden {
+    display: inline-flex !important;
+}
+
 .${PRESET_DRAG_INDICATOR_CLASS} {
     position: fixed;
     height: 2px;
@@ -320,6 +817,128 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} > li.completi
     z-index: 50001;
     background: var(--SmartThemeQuoteColor);
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 10px var(--SmartThemeQuoteColor);
+}
+
+.bai-bai-preset-vue-sortable-ghost {
+    opacity: 0.35;
+}
+
+.bai-bai-preset-vue-sortable-ghost.bai-bai-preset-group .bai-bai-preset-group-body {
+    visibility: hidden !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback.bai-bai-preset-group {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+    box-sizing: border-box !important;
+    padding: 0 !important;
+    border: 1px solid var(--SmartThemeBorderColor) !important;
+    border-radius: 8px !important;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 45%, transparent) !important;
+    overflow: hidden !important;
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    align-items: center !important;
+    box-sizing: border-box !important;
+    padding: 10px 7px !important;
+    border: 0 !important;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 75%, transparent) !important;
+    cursor: grabbing !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-title {
+    display: flex !important;
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    white-space: normal !important;
+    font-size: calc(var(--mainFontSize) * 1) !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-title strong {
+    flex: 0 1 auto !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    overflow-wrap: anywhere !important;
+    white-space: normal !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-actions {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    gap: 3px !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-toggle,
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-action-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    box-sizing: border-box !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: calc(var(--mainFontSize) * 0.9) !important;
+    line-height: 1 !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-enable-toggle {
+    font-size: calc(var(--mainFontSize) * 1.05) !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback .bai-bai-preset-group-count {
+    flex: 0 0 auto !important;
+    opacity: 0.65 !important;
+    white-space: nowrap !important;
+}
+
+.bai-bai-preset-vue-sortable-fallback.bai-bai-preset-group .bai-bai-preset-group-body {
+    display: none !important;
+}
+
+.bai-bai-preset-vue-sortable-chosen,
+.bai-bai-preset-vue-sortable-drag {
+    cursor: grabbing !important;
+}
+
+body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-vue-sortable-chosen,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .${PRESET_VUE_DRAG_READY_FEEDBACK_CLASS} {
+    outline: 2px solid color-mix(in srgb, var(--SmartThemeQuoteColor) 75%, transparent) !important;
+    outline-offset: -2px !important;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--SmartThemeQuoteColor) 35%, transparent) !important;
+}
+
+body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-vue-sortable-chosen.bai-bai-preset-group .bai-bai-preset-group-header,
+body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt.bai-bai-preset-vue-sortable-chosen,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .${PRESET_VUE_DRAG_READY_FEEDBACK_CLASS}.bai-bai-preset-group .bai-bai-preset-group-header,
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt.${PRESET_VUE_DRAG_READY_FEEDBACK_CLASS} {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor) 18%, transparent) !important;
+}
+
+@media (pointer: coarse) {
+    body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-vue-sortable-chosen,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .${PRESET_VUE_DRAG_READY_FEEDBACK_CLASS} {
+        transform: scale(0.995);
+        transition: transform 120ms ease, outline-color 120ms ease, box-shadow 120ms ease;
+    }
 }
 `;
 
@@ -358,6 +977,15 @@ function patchPromptManagerDraggable() {
 
     const originalMakeDraggable = manager.makeDraggable;
     const patchedMakeDraggable = function (...args) {
+        if (isPresetVuePromptListManagerActive()) {
+            const list = this?.listElement instanceof HTMLElement
+                ? this.listElement
+                : document.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
+            disablePromptManagerStockSortable(list);
+            preparePromptManagerCustomDragList(list);
+            return undefined;
+        }
+
         if (!settings.presetDragOptimizationEnabled) {
             return originalMakeDraggable.apply(this, args);
         }
@@ -398,16 +1026,34 @@ function preparePromptManagerCustomDragList(list = document.querySelector(PRESET
         return false;
     }
 
-    if (!settings.presetDragOptimizationEnabled) {
+    if (!settings.presetDragOptimizationEnabled && !isPresetGroupingEnabled()) {
         list.classList.remove(PRESET_DRAG_READY_CLASS, PRESET_DRAG_ACTIVE_CLASS);
         return false;
     }
 
     disablePromptManagerStockSortable(list);
     list.classList.add(PRESET_DRAG_READY_CLASS);
+    syncPresetVuePromptListGapVariable(list);
     list.querySelectorAll('li.completion_prompt_manager_prompt .drag-handle')
         .forEach(handle => handle.classList.add('ui-sortable-handle'));
     return true;
+}
+
+function syncPresetVuePromptListGapVariable(list) {
+    if (!(list instanceof HTMLElement)) {
+        return;
+    }
+
+    const styles = getComputedStyle(list);
+    const gap = styles.rowGap && styles.rowGap !== 'normal'
+        ? styles.rowGap
+        : styles.gap;
+
+    if (gap && gap !== 'normal') {
+        list.style.setProperty(PRESET_VUE_LIST_GAP_VARIABLE, gap);
+    } else {
+        list.style.removeProperty(PRESET_VUE_LIST_GAP_VARIABLE);
+    }
 }
 
 function clearPromptManagerCustomDragList() {
@@ -433,6 +1079,3032 @@ function disablePromptManagerStockSortable(list) {
         }
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to disable stock prompt manager sorting`, error);
+    }
+}
+
+async function installPresetVuePromptListManager() {
+    if (!isPresetGroupingEnabled()) {
+        return;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    manager.enabled = true;
+    installPresetVuePromptListRenderPatch();
+    patchPromptManagerDraggable();
+    applyPresetDragOptimizationCss();
+
+    if (manager.installing) {
+        return manager.installing;
+    }
+
+    manager.installing = (async () => {
+        if (!isPromptManagerReadyForVuePromptList()) {
+            schedulePresetVuePromptListManagerSync(250);
+            return;
+        }
+
+        if (manager.app && manager.host?.isConnected && manager.root?.isConnected) {
+            syncPresetVuePromptListManagerState();
+            preparePromptManagerCustomDragList(manager.root);
+            return;
+        }
+
+        if (manager.app) {
+            unmountPresetVuePromptListApp(manager);
+        }
+
+        const list = getPromptManagerListElement() ?? ensurePromptManagerListAfterVueHost();
+
+        if (!(list instanceof HTMLElement)) {
+            schedulePresetVuePromptListManagerSync(250);
+            return;
+        }
+
+        const { host, listClassName } = replacePromptManagerListWithVueHost(list);
+        const vue = await loadPresetVueModule();
+        const vueDraggableNext = await loadPresetVueDraggableModule();
+        manager.vue = vue;
+        manager.vueDraggableNext = vueDraggableNext;
+        manager.host = host;
+        manager.state = vue.reactive(createPresetVuePromptListModel());
+        manager.state.listClassName = listClassName;
+        manager.app = vue.createApp(createPresetVuePromptListRootComponent(vue, vueDraggableNext, manager.state));
+
+        manager.app.mount(host);
+        manager.root = host.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
+        if (manager.root instanceof HTMLElement && promptManager) {
+            promptManager.listElement = manager.root;
+        }
+        syncPresetVuePromptListManagerState();
+        preparePromptManagerCustomDragList(manager.root);
+    })();
+
+    try {
+        await manager.installing;
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to install preset Vue prompt list manager`, error);
+        toastr.error(t`Failed to install preset prompt list manager. See console for details.`);
+        removePresetVuePromptListManager();
+    } finally {
+        manager.installing = null;
+    }
+}
+
+function removePresetVuePromptListManager({ skipRestore = false } = {}) {
+    const manager = getPresetVuePromptListManagerState();
+    const shouldRestoreList = !skipRestore && Boolean(
+        manager.app
+        || manager.host?.isConnected
+        || document.querySelector(`.${PRESET_VUE_LIST_HOST_CLASS}`),
+    );
+
+    manager.enabled = false;
+    clearTimeout(manager.syncTimer);
+    manager.syncTimer = null;
+    clearPresetVuePromptOrderSaveSchedule(manager);
+    setPresetVuePromptDragScrollGuardEnabled(false);
+    document.body?.classList.remove(PRESET_VUE_DRAGGING_BODY_CLASS);
+
+    removePresetVuePromptListRenderPatch();
+
+    unmountPresetVuePromptListApp(manager);
+
+    manager.installing = null;
+    document.getElementById(PRESET_DRAG_STYLE_ID)?.remove();
+
+    if (shouldRestoreList) {
+        void restorePromptManagerListAfterVueRemove();
+    }
+}
+
+function unmountPresetVuePromptListApp(manager = getPresetVuePromptListManagerState()) {
+    clearPresetVuePromptOrderSaveSchedule(manager);
+    setPresetVuePromptDragScrollGuardEnabled(false);
+
+    if (manager.app) {
+        try {
+            manager.app.unmount();
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to unmount preset Vue prompt list manager`, error);
+        }
+    }
+
+    manager.app = null;
+    manager.state = null;
+    manager.root = null;
+    manager.dragSnapshot = null;
+    clearPresetVuePromptDragReadyFeedback(manager);
+    manager.groupHeaderGesture = null;
+    manager.lastGroupHeaderToggleAt = 0;
+    manager.lastGroupHeaderGestureCanceledAt = 0;
+    manager.lastDragStartedAt = 0;
+    manager.lastDragEndedAt = 0;
+}
+
+function getPresetVuePromptListManagerState() {
+    if (!extensionState[PRESET_VUE_LIST_MANAGER_KEY] || typeof extensionState[PRESET_VUE_LIST_MANAGER_KEY] !== 'object') {
+        extensionState[PRESET_VUE_LIST_MANAGER_KEY] = {
+            app: null,
+            host: null,
+            root: null,
+            state: null,
+            vue: null,
+            vueDraggableNext: null,
+            modulePromise: null,
+            draggableModulePromise: null,
+            installing: null,
+            syncTimer: null,
+            saveTimer: null,
+            saveFrame: null,
+            dragSnapshot: null,
+            pendingServiceSettingsSave: false,
+            pendingGroupSettingsSave: false,
+            pendingChangesSavePromise: null,
+            pendingChangesSaveInFlight: false,
+            pendingPresetPromptServiceSaves: null,
+            pendingPresetPromptGroupSaves: null,
+            pendingVisibilityTimer: null,
+            pendingVisibilityObserver: null,
+            dragReadyFeedbackTimer: null,
+            dragReadyFeedbackElement: null,
+            dragReadyFeedbackNotified: false,
+            groupHeaderGesture: null,
+            lastGroupHeaderToggleAt: 0,
+            lastGroupHeaderGestureCanceledAt: 0,
+            lastDragStartedAt: 0,
+            lastDragEndedAt: 0,
+            enabled: false,
+        };
+    }
+
+    return extensionState[PRESET_VUE_LIST_MANAGER_KEY];
+}
+
+function isPresetVuePromptListManagerActive() {
+    const manager = getPresetVuePromptListManagerState();
+    return Boolean(manager.app && manager.state);
+}
+
+function isPresetVuePromptListDragging() {
+    return Boolean(getPresetVuePromptListManagerState().state?.dragging);
+}
+
+function isPromptManagerReadyForVuePromptList() {
+    return Boolean(
+        promptManager
+        && promptManager.serviceSettings
+        && typeof promptManager.getPromptOrderForCharacter === 'function'
+        && typeof promptManager.removePromptOrderForCharacter === 'function'
+        && typeof promptManager.addPromptOrderForCharacter === 'function'
+        && typeof promptManager.saveServiceSettings === 'function'
+        && (getPromptManagerListElement() instanceof HTMLElement || getPresetVueListHostElement() instanceof HTMLElement),
+    );
+}
+
+function schedulePresetVuePromptListManagerSync(delayMs = 80) {
+    if (!isPresetGroupingEnabled()) {
+        return;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    clearTimeout(manager.syncTimer);
+    manager.syncTimer = setTimeout(() => {
+        manager.syncTimer = null;
+        void installPresetVuePromptListManager();
+    }, delayMs);
+}
+
+async function loadPresetVueModule() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (!manager.modulePromise) {
+        manager.modulePromise = import(new URL(PRESET_VUE_MODULE_PATH, import.meta.url).href);
+    }
+
+    return manager.modulePromise;
+}
+
+async function loadPresetVueDraggableModule() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (!manager.draggableModulePromise) {
+        manager.draggableModulePromise = import(new URL(PRESET_VUE_DRAGGABLE_MODULE_PATH, import.meta.url).href);
+    }
+
+    return manager.draggableModulePromise;
+}
+
+function getPromptManagerListElement() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.root instanceof HTMLElement && manager.root.isConnected) {
+        return manager.root;
+    }
+
+    if (promptManager?.listElement instanceof HTMLElement && promptManager.listElement.isConnected) {
+        return promptManager.listElement;
+    }
+
+    const list = document.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
+
+    if (list instanceof HTMLElement && promptManager) {
+        promptManager.listElement = list;
+    }
+
+    return list;
+}
+
+function getPresetVueListHostElement() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.host instanceof HTMLElement && manager.host.isConnected) {
+        return manager.host;
+    }
+
+    const host = document.querySelector(`.${PRESET_VUE_LIST_HOST_CLASS}`);
+    return host instanceof HTMLElement ? host : null;
+}
+
+function replacePromptManagerListWithVueHost(list) {
+    const host = document.createElement('div');
+    host.className = PRESET_VUE_LIST_HOST_CLASS;
+    list.replaceWith(host);
+    return {
+        host,
+        listClassName: getPresetVuePromptListClassName(list),
+    };
+}
+
+function getPresetVuePromptListClassName(list) {
+    const classes = new Set(String(list?.className || 'text_pole').split(/\s+/).filter(Boolean));
+    classes.add('text_pole');
+    classes.add(PRESET_DRAG_READY_CLASS);
+    return Array.from(classes).join(' ');
+}
+
+function ensurePromptManagerListAfterVueHost() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.root instanceof HTMLElement && manager.root.isConnected) {
+        return manager.root;
+    }
+
+    const host = getPresetVueListHostElement();
+
+    if (host instanceof HTMLElement) {
+        const existingList = host.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
+
+        if (existingList instanceof HTMLElement) {
+            manager.host = host;
+            manager.root = existingList;
+
+            if (promptManager) {
+                promptManager.listElement = existingList;
+            }
+
+            return existingList;
+        }
+
+        const list = document.createElement('ul');
+        list.id = PRESET_PROMPT_MANAGER_LIST_SELECTOR.slice(1);
+        list.className = 'text_pole';
+        host.replaceWith(list);
+        manager.host = null;
+        manager.root = list;
+
+        if (promptManager) {
+            promptManager.listElement = list;
+        }
+
+        return list;
+    }
+
+    return getPromptManagerListElement();
+}
+
+async function restorePromptManagerListAfterVueRemove() {
+    const list = ensurePromptManagerListAfterVueHost();
+
+    if (!(list instanceof HTMLElement) || !promptManager || typeof promptManager.renderPromptManagerListItems !== 'function') {
+        return;
+    }
+
+    list.replaceChildren();
+
+    try {
+        await promptManager.renderPromptManagerListItems();
+        restorePromptManagerDragAfterVueRemove();
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to restore prompt manager list after Vue remove`, error);
+    }
+}
+
+function restorePromptManagerDragAfterVueRemove() {
+    if (isPresetGroupingEnabled()) {
+        return;
+    }
+
+    const list = getPromptManagerListElement();
+
+    if (settings.presetDragOptimizationEnabled) {
+        patchPromptManagerDraggable();
+        installPresetDragOptimizationHandlers();
+        preparePromptManagerCustomDragList(list);
+        return;
+    }
+
+    removePresetDragOptimizationHandlers();
+    clearPromptManagerCustomDragList();
+    restorePromptManagerStockDraggable();
+}
+
+function installPresetVuePromptListRenderPatch() {
+    if (!promptManager || typeof promptManager.renderPromptManagerListItems !== 'function') {
+        return false;
+    }
+
+    const existingPatch = extensionState[PRESET_VUE_LIST_RENDER_PATCH_KEY];
+
+    if (existingPatch?.manager === promptManager && promptManager.renderPromptManagerListItems === existingPatch.patched) {
+        return true;
+    }
+
+    if (promptManager.renderPromptManagerListItems.__baiBaiToolkitPresetVueListPatched) {
+        extensionState[PRESET_VUE_LIST_RENDER_PATCH_KEY] = {
+            manager: promptManager,
+            original: promptManager.renderPromptManagerListItems.__baiBaiToolkitOriginalRenderPromptManagerListItems,
+            patched: promptManager.renderPromptManagerListItems,
+        };
+        return true;
+    }
+
+    const originalRenderPromptManagerListItems = promptManager.renderPromptManagerListItems;
+    const patchedRenderPromptManagerListItems = async function (...args) {
+        if (!isPresetGroupingEnabled()) {
+            return originalRenderPromptManagerListItems.apply(this, args);
+        }
+
+        await installPresetVuePromptListManager();
+        syncPresetVuePromptListManagerState();
+        preparePromptManagerCustomDragList(getPromptManagerListElement());
+        return undefined;
+    };
+
+    patchedRenderPromptManagerListItems.__baiBaiToolkitPresetVueListPatched = true;
+    patchedRenderPromptManagerListItems.__baiBaiToolkitOriginalRenderPromptManagerListItems = originalRenderPromptManagerListItems;
+    promptManager.renderPromptManagerListItems = patchedRenderPromptManagerListItems;
+    extensionState[PRESET_VUE_LIST_RENDER_PATCH_KEY] = {
+        manager: promptManager,
+        original: originalRenderPromptManagerListItems,
+        patched: patchedRenderPromptManagerListItems,
+    };
+    return true;
+}
+
+function removePresetVuePromptListRenderPatch() {
+    const patch = extensionState[PRESET_VUE_LIST_RENDER_PATCH_KEY];
+
+    if (!patch) {
+        return;
+    }
+
+    if (patch.manager?.renderPromptManagerListItems === patch.patched) {
+        patch.manager.renderPromptManagerListItems = patch.original;
+    }
+
+    delete extensionState[PRESET_VUE_LIST_RENDER_PATCH_KEY];
+}
+
+function createPresetVuePromptListModel() {
+    return {
+        items: [],
+        listClassName: `text_pole ${PRESET_DRAG_READY_CLASS}`,
+        renderKey: 0,
+        reclaimKey: 0,
+        dragging: false,
+        rangeSelection: {
+            active: false,
+            name: '',
+            startId: null,
+            endId: null,
+            hoverId: null,
+        },
+    };
+}
+
+function syncPresetVuePromptListManagerState() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (!manager.state) {
+        return false;
+    }
+
+    repairPresetPromptOrderDuplicatesIfNeeded();
+    repairPresetPromptGroupStateIfNeeded();
+    syncCurrentPresetPromptGroupStateToPresetExtensionField({ persist: false });
+    manager.state.items = buildPresetVuePromptListItems();
+    manager.state.renderKey += 1;
+    return true;
+}
+
+function repairPresetPromptOrderDuplicatesIfNeeded() {
+    if (!isPromptManagerReadyForCustomDrag()) {
+        return false;
+    }
+
+    const promptOrder = promptManager.getPromptOrderForCharacter(promptManager.activeCharacter) ?? [];
+    const seenPromptIds = new Set();
+    const repairedPromptOrder = [];
+    let changed = false;
+
+    for (const entry of promptOrder) {
+        const identifier = entry?.identifier;
+
+        if (!identifier) {
+            changed = true;
+            continue;
+        }
+
+        if (seenPromptIds.has(identifier)) {
+            changed = true;
+            continue;
+        }
+
+        seenPromptIds.add(identifier);
+        repairedPromptOrder.push(entry);
+    }
+
+    if (!changed) {
+        return false;
+    }
+
+    promptManager.removePromptOrderForCharacter(promptManager.activeCharacter);
+    promptManager.addPromptOrderForCharacter(promptManager.activeCharacter, repairedPromptOrder);
+    markPresetPromptServiceSettingsSavePending();
+    return true;
+}
+
+function repairPresetPromptGroupStateIfNeeded() {
+    if (!isPromptManagerReadyForCustomDrag()) {
+        return false;
+    }
+
+    const groupState = getPresetPromptGroupState();
+    const validPromptIds = new Set(
+        (promptManager.getPromptOrderForCharacter(promptManager.activeCharacter) ?? [])
+            .map(entry => entry?.identifier)
+            .filter(Boolean),
+    );
+    const before = JSON.stringify({
+        groups: groupState.groups,
+        prompts: groupState.prompts,
+    });
+
+    normalizePresetPromptGroupState(groupState, validPromptIds);
+
+    const after = JSON.stringify({
+        groups: groupState.groups,
+        prompts: groupState.prompts,
+    });
+
+    if (before === after) {
+        return false;
+    }
+
+    savePresetPromptGroupSettings();
+    return true;
+}
+
+function buildPresetVuePromptListItems() {
+    const promptOrder = promptManager.getPromptOrderForCharacter?.(promptManager.activeCharacter) ?? [];
+    const prompts = Array.isArray(promptManager.serviceSettings?.prompts)
+        ? promptManager.serviceSettings.prompts.filter(Boolean)
+        : [];
+    const promptById = new Map(prompts.map(prompt => [prompt.identifier, prompt]));
+    const groupState = getPresetPromptGroupState();
+    normalizePresetPromptGroupState(groupState, new Set(promptOrder.map(entry => entry?.identifier).filter(Boolean)));
+    const groupsById = new Map(groupState.groups.map(group => [group.id, group]));
+    const counts = promptManager.tokenHandler?.getCounts?.() ?? {};
+    const tokenBudget = promptManager.serviceSettings.openai_max_context - promptManager.serviceSettings.openai_max_tokens;
+    const isTokenUsageWarning = promptManager.tokenUsage > tokenBudget * 0.8;
+    const promptItems = promptOrder
+        .map((orderEntry, index) => {
+            const prompt = promptById.get(orderEntry?.identifier);
+
+            if (!prompt?.identifier) {
+                return null;
+            }
+
+            const listEntry = promptManager.getPromptOrderEntry?.(promptManager.activeCharacter, prompt.identifier) ?? orderEntry;
+            const groupId = groupState.prompts?.[prompt.identifier]?.groupId;
+            const group = groupsById.get(groupId) ?? null;
+            const tokens = counts[prompt.identifier] ?? 0;
+            const { warningClass, warningTitle } = getPromptTokenWarning({
+                prompt,
+                tokens,
+                isTokenUsageWarning,
+            });
+
+            return {
+                id: prompt.identifier,
+                type: 'prompt',
+                groupId: group?.id ?? null,
+                prompt,
+                orderEntry: listEntry,
+                enabled: listEntry?.enabled !== false,
+                tokens,
+                calculatedTokens: tokens ? String(tokens) : '-',
+                warningClass,
+                warningTitle,
+                index,
+            };
+        })
+        .filter(Boolean);
+
+    const items = [
+        { id: PRESET_VUE_HEADER_ENTRY_ID, type: 'header' },
+        { id: PRESET_VUE_SEPARATOR_ENTRY_ID, type: 'separator' },
+    ];
+    const groupItemsById = new Map();
+
+    for (const item of promptItems) {
+        if (item.groupId) {
+            const group = groupsById.get(item.groupId);
+            let groupItem = groupItemsById.get(item.groupId);
+
+            if (!groupItem) {
+                groupItem = {
+                    id: `group:${item.groupId}`,
+                    type: 'group',
+                    groupId: item.groupId,
+                    group,
+                    name: group?.name ?? t`未命名分组`,
+                    collapsed: Boolean(group?.collapsed),
+                    count: 0,
+                    children: [],
+                };
+                groupItemsById.set(item.groupId, groupItem);
+                items.push(groupItem);
+            }
+
+            groupItem.children.push(item);
+            groupItem.count = groupItem.children.length;
+            continue;
+        }
+
+        items.push(item);
+    }
+
+    return items;
+}
+
+function createPresetVuePromptListRootComponent(vue, vueDraggableNext, model) {
+    const { h } = vue;
+
+    return {
+        name: 'BaiBaiPresetPromptListRoot',
+        render() {
+            return renderPresetVuePromptDraggable(h, vueDraggableNext, model);
+        },
+    };
+}
+
+function renderPresetVuePromptListHeader(h, model) {
+    const prefix = promptManager?.configuration?.prefix ?? '';
+    const selecting = Boolean(model?.rangeSelection?.active);
+
+    return h('li', { class: `${prefix}prompt_manager_list_head`, key: 'header' }, [
+        h('span', { 'data-i18n': 'Name' }, 'Name'),
+        h('span', { class: 'bai-bai-preset-list-head-actions' }, [
+            selecting
+                ? h('span', {
+                    class: 'menu_button fa-solid fa-xmark',
+                    title: t`取消分组选择`,
+                    onClick: event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        cancelPresetVuePromptGroupRangeSelection(model);
+                    },
+                })
+                : h('span', {
+                    class: 'menu_button fa-solid fa-folder-plus',
+                    title: t`创建预设分组`,
+                    onClick: event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void startPresetVuePromptGroupRangeSelection(model);
+                    },
+                }),
+        ]),
+    ]);
+}
+
+function renderPresetVuePromptListSeparator(h) {
+    const prefix = promptManager?.configuration?.prefix ?? '';
+
+    return h('li', { class: `${prefix}prompt_manager_list_separator`, key: 'separator' }, [
+        h('hr'),
+    ]);
+}
+
+function renderPresetVuePromptDraggable(h, vueDraggableNext, model) {
+    const handleSelector = getPresetVuePromptDragHandleSelector();
+    const draggableProps = {
+        tag: 'ul',
+        id: PRESET_PROMPT_MANAGER_LIST_SELECTOR.slice(1),
+        class: model.listClassName,
+        list: model.items,
+        group: {
+            name: 'bai-bai-preset-prompts',
+            pull: true,
+            put: canPutPresetVuePromptIntoTopLevelList,
+        },
+        draggable: `li.${PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS}`,
+        filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
+        preventOnFilter: false,
+        animation: PRESET_VUE_DRAG_ANIMATION_MS,
+        dragoverBubble: false,
+        bubbleScroll: false,
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackClass: 'bai-bai-preset-vue-sortable-fallback',
+        ghostClass: 'bai-bai-preset-vue-sortable-ghost',
+        chosenClass: 'bai-bai-preset-vue-sortable-chosen',
+        dragClass: 'bai-bai-preset-vue-sortable-drag',
+        move: isPresetVuePromptTopLevelDragMoveAllowed,
+        onChoose: () => {
+            closePresetPromptActionMenus();
+        },
+        key: `draggable-${model.renderKey}`,
+        onStart: () => {
+            const manager = getPresetVuePromptListManagerState();
+            manager.groupHeaderGesture = null;
+            manager.lastDragStartedAt = Date.now();
+            showPresetVuePromptDragReadyFeedback(manager, { notify: false });
+            setPresetVuePromptDragging(model, true);
+            notifyPresetVuePromptDragStarted();
+            capturePresetVuePromptDragSnapshot(model);
+        },
+        onEnd: () => {
+            const manager = getPresetVuePromptListManagerState();
+            manager.lastDragEndedAt = Date.now();
+            setPresetVuePromptDragging(model, false);
+            if (consumePresetVuePromptDragChange(model)) {
+                schedulePresetVuePromptOrderSaveAfterDrop();
+            }
+        },
+    };
+    applyPresetVueDragGestureOptions(draggableProps);
+
+    if (handleSelector) {
+        draggableProps.handle = handleSelector;
+    }
+
+    return h(vueDraggableNext.VueDraggableNext, draggableProps, {
+        default: () => model.items.map(item => renderPresetVuePromptEntry(h, vueDraggableNext, item)),
+    });
+}
+
+function isPresetVuePromptTopLevelDragMoveAllowed(event) {
+    if (getPresetVuePromptListManagerState().state?.rangeSelection?.active) {
+        return false;
+    }
+
+    const dragged = event?.draggedContext?.element;
+    const futureIndex = Number(event?.draggedContext?.futureIndex);
+    const to = event?.to;
+
+    if (dragged?.type !== 'prompt' && dragged?.type !== 'group') {
+        return false;
+    }
+
+    if (dragged.type === 'group' && !(to instanceof HTMLElement && to.id === PRESET_PROMPT_MANAGER_LIST_SELECTOR.slice(1))) {
+        return false;
+    }
+
+    if (!Number.isFinite(futureIndex)) {
+        return true;
+    }
+
+    return futureIndex >= 2;
+}
+
+function isPresetVuePromptGroupDragMoveAllowed(event) {
+    if (getPresetVuePromptListManagerState().state?.rangeSelection?.active) {
+        return false;
+    }
+
+    const dragged = event?.draggedContext?.element;
+    return dragged?.type === 'prompt';
+}
+
+function canPutPresetVuePromptIntoGroupList(to, from, dragElement) {
+    return dragElement instanceof HTMLElement && dragElement.matches('li.completion_prompt_manager_prompt_draggable');
+}
+
+function canPutPresetVuePromptIntoTopLevelList(to, from, dragElement) {
+    if (!(to instanceof HTMLElement) || to.id !== PRESET_PROMPT_MANAGER_LIST_SELECTOR.slice(1)) {
+        return false;
+    }
+
+    if (!(dragElement instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (dragElement.matches(`li.${PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS}`)) {
+        return false;
+    }
+
+    return dragElement.matches(`li.${PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS}`);
+}
+
+function capturePresetVuePromptDragSnapshot(model) {
+    getPresetVuePromptListManagerState().dragSnapshot = getPresetVuePromptListSnapshot(model);
+}
+
+function consumePresetVuePromptDragChange(model) {
+    const manager = getPresetVuePromptListManagerState();
+    const snapshot = manager.dragSnapshot;
+    manager.dragSnapshot = null;
+
+    if (!snapshot) {
+        return false;
+    }
+
+    const sanitized = sanitizePresetVuePromptListModel(model);
+    const current = getPresetVuePromptListSnapshot(model);
+    return sanitized
+        || !areStringArraysEqual(snapshot.order, current.order)
+        || !arePresetVuePromptGroupAssignmentsEqual(snapshot.assignments, current.assignments);
+}
+
+function getPresetVuePromptListSnapshot(model) {
+    return {
+        order: getPresetVuePromptFlatIds(model),
+        assignments: getPresetVuePromptGroupAssignmentsFromModel(model),
+    };
+}
+
+function arePresetVuePromptGroupAssignmentsEqual(left = {}, right = {}) {
+    const promptIds = new Set([...Object.keys(left), ...Object.keys(right)]);
+
+    for (const promptId of promptIds) {
+        if ((left[promptId] ?? null) !== (right[promptId] ?? null)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function renderPresetVuePromptEntry(h, vueDraggableNext, item) {
+    if (item?.type === 'header') {
+        return renderPresetVuePromptListHeader(h, getPresetVuePromptListManagerState().state);
+    }
+
+    if (item?.type === 'separator') {
+        return renderPresetVuePromptListSeparator(h);
+    }
+
+    if (item?.type === 'group') {
+        return renderPresetVuePromptGroup(h, vueDraggableNext, item);
+    }
+
+    return renderPresetVuePromptRow(h, item, { topLevel: true });
+}
+
+function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
+    const handleSelector = getPresetVuePromptDragHandleSelector();
+    const groupFullyEnabled = isPresetVuePromptGroupFullyEnabled(item);
+    const draggableProps = {
+        tag: 'ul',
+        class: 'bai-bai-preset-group-list',
+        list: item.children,
+        group: {
+            name: 'bai-bai-preset-prompts',
+            pull: true,
+            put: canPutPresetVuePromptIntoGroupList,
+        },
+        draggable: `li.${PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS}`,
+        filter: PRESET_DRAG_INTERACTIVE_SELECTOR,
+        preventOnFilter: false,
+        animation: PRESET_VUE_DRAG_ANIMATION_MS,
+        dragoverBubble: false,
+        bubbleScroll: false,
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackClass: 'bai-bai-preset-vue-sortable-fallback',
+        ghostClass: 'bai-bai-preset-vue-sortable-ghost',
+        chosenClass: 'bai-bai-preset-vue-sortable-chosen',
+        dragClass: 'bai-bai-preset-vue-sortable-drag',
+        move: isPresetVuePromptGroupDragMoveAllowed,
+        onChoose: () => {
+            closePresetPromptActionMenus();
+        },
+        onStart: () => {
+            const manager = getPresetVuePromptListManagerState();
+            const model = manager.state;
+            manager.groupHeaderGesture = null;
+            manager.lastDragStartedAt = Date.now();
+            showPresetVuePromptDragReadyFeedback(manager, { notify: false });
+            setPresetVuePromptDragging(model, true);
+            notifyPresetVuePromptDragStarted();
+            capturePresetVuePromptDragSnapshot(model);
+        },
+        onEnd: () => {
+            const manager = getPresetVuePromptListManagerState();
+            const model = manager.state;
+            manager.lastDragEndedAt = Date.now();
+            setPresetVuePromptDragging(model, false);
+            if (consumePresetVuePromptDragChange(model)) {
+                schedulePresetVuePromptOrderSaveAfterDrop();
+            }
+        },
+    };
+    applyPresetVueDragGestureOptions(draggableProps);
+
+    if (handleSelector) {
+        draggableProps.handle = handleSelector;
+    }
+
+    return h('li', {
+        class: [
+            PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS,
+            'bai-bai-preset-group',
+            item.collapsed ? 'bai-bai-preset-group-collapsed' : '',
+        ],
+        'data-preset-group-id': item.groupId,
+        key: item.id,
+    }, [
+        h('div', {
+            class: 'bai-bai-preset-group-header bai-bai-preset-group-drag-surface',
+            onPointerdown: event => beginPresetVuePromptGroupHeaderGesture(event, item.groupId),
+            onPointermoveCapture: event => movePresetVuePromptGroupHeaderGesture(event, item.groupId),
+            onPointerup: event => finishPresetVuePromptGroupHeaderGesture(event, item.groupId),
+            onPointercancel: () => cancelPresetVuePromptGroupHeaderGesture(item.groupId),
+            onClick: event => handlePresetVuePromptGroupHeaderClickFallback(event, item.groupId),
+        }, [
+            h('span', { class: 'bai-bai-preset-group-title', title: item.name }, [
+                h('span', {
+                    class: [
+                        'menu_button',
+                        'bai-bai-preset-group-toggle',
+                        'fa-solid',
+                        item.collapsed ? 'fa-chevron-right' : 'fa-chevron-down',
+                    ],
+                    title: item.collapsed ? t`展开分组` : t`收起分组`,
+                    onClick: event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        togglePresetVuePromptGroupCollapsed(item.groupId);
+                    },
+                }),
+                h('strong', null, item.name),
+                h('small', { class: 'bai-bai-preset-group-count' }, formatPresetVuePromptGroupCount(item)),
+            ]),
+            h('span', { class: 'bai-bai-preset-group-actions' }, [
+                h('span', {
+                    class: [
+                        'menu_button',
+                        'fa-solid',
+                        'bai-bai-preset-group-action-button',
+                        'bai-bai-preset-group-enable-toggle',
+                        groupFullyEnabled ? 'fa-toggle-on' : 'fa-toggle-off',
+                    ],
+                    title: groupFullyEnabled ? t`关闭分组内所有条目` : t`开启分组内所有条目`,
+                    onClick: event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        togglePresetVuePromptGroupEnabled(item.groupId);
+                    },
+                }),
+                h('span', {
+                    class: 'menu_button fa-solid fa-pencil bai-bai-preset-group-action-button',
+                    title: t`重命名分组`,
+                    onClick: event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void renamePresetVuePromptGroup(item.groupId);
+                    },
+                }),
+                h('span', {
+                    class: 'menu_button fa-solid fa-trash bai-bai-preset-group-action-button',
+                    title: t`删除分组`,
+                    onClick: event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void deletePresetVuePromptGroup(item.groupId);
+                    },
+                }),
+            ]),
+        ]),
+        renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProps),
+    ]);
+}
+
+function isPresetVuePromptGroupFullyEnabled(item) {
+    const children = Array.isArray(item?.children) ? item.children : [];
+    return children.length > 0 && children.every(child => child?.enabled !== false && child?.orderEntry?.enabled !== false);
+}
+
+function formatPresetVuePromptGroupCount(item) {
+    const children = Array.isArray(item?.children) ? item.children : [];
+    const total = children.length || Number(item?.count) || 0;
+    const enabled = children.filter(child => child?.enabled !== false && child?.orderEntry?.enabled !== false).length;
+    return `(${enabled}/${total})`;
+}
+
+function beginPresetVuePromptGroupHeaderGesture(event, groupId) {
+    if (isPresetVuePromptGroupHeaderInteractiveEvent(event)) {
+        return;
+    }
+
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+        return;
+    }
+
+    if (event.isPrimary === false) {
+        return;
+    }
+
+    const point = getPresetVuePointerEventPoint(event);
+
+    if (!point) {
+        return;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    const feedbackElement = getPresetVuePromptGroupHeaderFeedbackElement(event.currentTarget);
+
+    clearPresetVuePromptDragReadyFeedback(manager);
+    schedulePresetVuePromptDragReadyFeedback(manager, feedbackElement);
+    manager.groupHeaderGesture = {
+        groupId,
+        pointerId: event.pointerId,
+        startedAt: Date.now(),
+        x: point.clientX,
+        y: point.clientY,
+        lastY: point.clientY,
+        scrolling: false,
+        scrollTargets: getPresetVuePromptGroupHeaderScrollTargets(event.currentTarget),
+    };
+}
+
+function movePresetVuePromptGroupHeaderGesture(event, groupId) {
+    if (!isMobile()) {
+        return;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    const gesture = manager.groupHeaderGesture;
+
+    if (!gesture || gesture.groupId !== groupId || gesture.pointerId !== event.pointerId || manager.state?.dragging) {
+        return;
+    }
+
+    const point = getPresetVuePointerEventPoint(event);
+
+    if (!point) {
+        return;
+    }
+
+    const deltaX = point.clientX - gesture.x;
+    const deltaY = point.clientY - gesture.y;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    const beforeLongPress = Date.now() - gesture.startedAt < PRESET_VUE_TOUCH_DRAG_DELAY_MS;
+
+    if (!gesture.scrolling) {
+        if (!beforeLongPress || absY <= PRESET_VUE_TOUCH_START_THRESHOLD_PX || absY < absX) {
+            return;
+        }
+
+        gesture.scrolling = true;
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+        clearPresetVuePromptDragReadyFeedback(manager);
+    }
+
+    scrollPresetVuePromptGroupHeaderGesture(gesture, point);
+
+    if (event.cancelable) {
+        event.preventDefault();
+    }
+
+    event.stopPropagation();
+}
+
+function finishPresetVuePromptGroupHeaderGesture(event, groupId) {
+    const manager = getPresetVuePromptListManagerState();
+    const gesture = manager.groupHeaderGesture;
+
+    if (!gesture || gesture.groupId !== groupId || gesture.pointerId !== event.pointerId) {
+        return;
+    }
+
+    manager.groupHeaderGesture = null;
+    clearPresetVuePromptDragReadyFeedback(manager);
+
+    if (isPresetVuePromptGroupHeaderInteractiveEvent(event) || shouldSuppressPresetVuePromptGroupHeaderToggle(manager)) {
+        return;
+    }
+
+    const point = getPresetVuePointerEventPoint(event);
+
+    if (!point || gesture.scrolling || getPresetVuePointDistance(gesture, point) > PRESET_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX) {
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+        return;
+    }
+
+    if (event.cancelable) {
+        event.preventDefault();
+    }
+
+    event.stopPropagation();
+    manager.lastGroupHeaderToggleAt = Date.now();
+    togglePresetVuePromptGroupCollapsed(groupId);
+}
+
+function cancelPresetVuePromptGroupHeaderGesture(groupId) {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.groupHeaderGesture?.groupId === groupId) {
+        manager.groupHeaderGesture = null;
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+        clearPresetVuePromptDragReadyFeedback(manager);
+    }
+}
+
+function handlePresetVuePromptGroupHeaderClickFallback(event, groupId) {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (isPresetVuePromptGroupHeaderInteractiveEvent(event)) {
+        return;
+    }
+
+    const now = Date.now();
+
+    if (
+        now - (manager.lastGroupHeaderToggleAt || 0) < PRESET_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS
+        || now - (manager.lastGroupHeaderGestureCanceledAt || 0) < PRESET_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS
+        || shouldSuppressPresetVuePromptGroupHeaderToggle(manager)
+    ) {
+        if (event.cancelable) {
+            event.preventDefault();
+        }
+
+        event.stopPropagation();
+        return;
+    }
+
+    manager.lastGroupHeaderToggleAt = now;
+    togglePresetVuePromptGroupCollapsed(groupId);
+}
+
+function shouldSuppressPresetVuePromptGroupHeaderToggle(manager) {
+    return Boolean(
+        manager.state?.dragging
+        || Date.now() - (manager.lastDragEndedAt || 0) < PRESET_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS,
+    );
+}
+
+function isPresetVuePromptGroupHeaderInteractiveEvent(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    return Boolean(target?.closest('.bai-bai-preset-group-actions, .bai-bai-preset-group-toggle'));
+}
+
+function getPresetVuePointerEventPoint(event) {
+    if (typeof event?.clientX !== 'number' || typeof event?.clientY !== 'number') {
+        return null;
+    }
+
+    return {
+        clientX: event.clientX,
+        clientY: event.clientY,
+    };
+}
+
+function getPresetVuePointDistance(start, end) {
+    return Math.hypot(end.clientX - start.x, end.clientY - start.y);
+}
+
+function getPresetVuePromptGroupHeaderFeedbackElement(source) {
+    if (!(source instanceof Element)) {
+        return null;
+    }
+
+    return source.closest(`li.${PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS}`);
+}
+
+function schedulePresetVuePromptDragReadyFeedback(manager, element) {
+    if (!isMobile() || !(element instanceof HTMLElement)) {
+        return;
+    }
+
+    manager.dragReadyFeedbackElement = element;
+    manager.dragReadyFeedbackTimer = window.setTimeout(() => {
+        if (manager.groupHeaderGesture?.scrolling) {
+            clearPresetVuePromptDragReadyFeedback(manager);
+            return;
+        }
+
+        showPresetVuePromptDragReadyFeedback(manager);
+    }, PRESET_VUE_TOUCH_DRAG_DELAY_MS);
+}
+
+function showPresetVuePromptDragReadyFeedback(manager, { notify = true } = {}) {
+    if (manager.dragReadyFeedbackTimer) {
+        clearTimeout(manager.dragReadyFeedbackTimer);
+        manager.dragReadyFeedbackTimer = null;
+    }
+
+    if (manager.dragReadyFeedbackElement instanceof HTMLElement) {
+        manager.dragReadyFeedbackElement.classList.add(PRESET_VUE_DRAG_READY_FEEDBACK_CLASS);
+    }
+
+    if (notify && !manager.dragReadyFeedbackNotified) {
+        manager.dragReadyFeedbackNotified = true;
+        vibratePresetVuePromptDragFeedback();
+    }
+}
+
+function clearPresetVuePromptDragReadyFeedback(manager = getPresetVuePromptListManagerState()) {
+    if (manager.dragReadyFeedbackTimer) {
+        clearTimeout(manager.dragReadyFeedbackTimer);
+        manager.dragReadyFeedbackTimer = null;
+    }
+
+    if (manager.dragReadyFeedbackElement instanceof HTMLElement) {
+        manager.dragReadyFeedbackElement.classList.remove(PRESET_VUE_DRAG_READY_FEEDBACK_CLASS);
+    }
+
+    manager.dragReadyFeedbackElement = null;
+    manager.dragReadyFeedbackNotified = false;
+}
+
+function getPresetVuePromptGroupHeaderScrollTargets(source) {
+    const targets = [];
+    let current = source instanceof Element ? source.parentElement : null;
+
+    while (current && current !== document.body && current !== document.documentElement) {
+        const style = getComputedStyle(current);
+        const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY);
+
+        if (canScrollY && current.scrollHeight > current.clientHeight) {
+            targets.push(current);
+        }
+
+        current = current.parentElement;
+    }
+
+    targets.push(document.scrollingElement || document.documentElement);
+    return targets;
+}
+
+function scrollPresetVuePromptGroupHeaderGesture(gesture, point) {
+    const deltaY = gesture.lastY - point.clientY;
+    gesture.lastY = point.clientY;
+
+    if (!deltaY) {
+        return;
+    }
+
+    let remaining = deltaY;
+
+    for (const target of gesture.scrollTargets ?? []) {
+        if (!(target instanceof Element)) {
+            continue;
+        }
+
+        const before = target.scrollTop;
+        target.scrollTop += remaining;
+        remaining -= target.scrollTop - before;
+
+        if (Math.abs(remaining) < 0.5) {
+            return;
+        }
+    }
+}
+
+function renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProps) {
+    return h('div', {
+        class: 'bai-bai-preset-group-body',
+        'aria-hidden': item.collapsed ? 'true' : 'false',
+    }, [
+        h('div', { class: 'bai-bai-preset-group-body-inner' }, [
+            h(vueDraggableNext.VueDraggableNext, draggableProps, {
+                default: () => (item.children ?? []).map(child => renderPresetVuePromptRow(h, child, { groupChild: true })),
+            }),
+        ]),
+    ]);
+}
+
+function applyPresetVueDragGestureOptions(draggableProps) {
+    if (isMobile()) {
+        Object.assign(draggableProps, {
+            delay: PRESET_VUE_TOUCH_DRAG_DELAY_MS,
+            delayOnTouchOnly: true,
+            touchStartThreshold: PRESET_VUE_TOUCH_START_THRESHOLD_PX,
+            fallbackTolerance: PRESET_VUE_TOUCH_START_THRESHOLD_PX,
+        });
+        return;
+    }
+
+    Object.assign(draggableProps, {
+        touchStartThreshold: PRESET_VUE_POINTER_START_THRESHOLD_PX,
+        fallbackTolerance: PRESET_VUE_POINTER_START_THRESHOLD_PX,
+    });
+}
+
+function notifyPresetVuePromptDragStarted() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.dragReadyFeedbackNotified) {
+        return;
+    }
+
+    vibratePresetVuePromptDragFeedback();
+}
+
+function vibratePresetVuePromptDragFeedback() {
+    if (!isMobile() || typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') {
+        return;
+    }
+
+    try {
+        navigator.vibrate(12);
+    } catch {
+        // Some embedded webviews expose vibrate but reject it.
+    }
+}
+
+function getPresetVuePromptDragHandleSelector() {
+    return isMobile() && !settings.presetMobileWholeRowDragEnabled
+        ? '.drag-handle, .bai-bai-preset-group-drag-surface'
+        : '';
+}
+
+function setPresetVuePromptDragging(model, dragging) {
+    if (!model) {
+        if (!dragging) {
+            clearPresetVuePromptDragReadyFeedback();
+            setPresetVuePromptDragScrollGuardEnabled(false);
+            document.body?.classList.remove(PRESET_VUE_DRAGGING_BODY_CLASS);
+            getPromptManagerListElement()?.classList.remove(PRESET_DRAG_ACTIVE_CLASS);
+        }
+        return;
+    }
+
+    if (dragging) {
+        closePresetPromptActionMenus();
+    }
+
+    model.dragging = Boolean(dragging);
+    document.body?.classList.toggle(PRESET_VUE_DRAGGING_BODY_CLASS, model.dragging);
+    getPromptManagerListElement()?.classList.toggle(PRESET_DRAG_ACTIVE_CLASS, model.dragging);
+    setPresetVuePromptDragScrollGuardEnabled(model.dragging);
+
+    if (!model.dragging) {
+        clearPresetVuePromptDragReadyFeedback();
+    }
+
+    if (!model.dragging && extensionState.promptManagerTokenRefreshPendingAfterDrag) {
+        extensionState.promptManagerTokenRefreshPendingAfterDrag = false;
+        refreshPromptManagerTokensDebounced();
+    }
+}
+
+function setPresetVuePromptDragScrollGuardEnabled(enabled) {
+    if (!isMobile()) {
+        return;
+    }
+
+    const existing = extensionState[PRESET_VUE_TOUCH_SCROLL_GUARD_KEY];
+
+    if (enabled) {
+        if (existing?.touchmove) {
+            return;
+        }
+
+        const touchmove = event => {
+            if (!isPresetVuePromptListDragging()) {
+                return;
+            }
+
+            if (event.cancelable) {
+                event.preventDefault();
+            }
+        };
+
+        document.addEventListener('touchmove', touchmove, { capture: true, passive: false });
+        extensionState[PRESET_VUE_TOUCH_SCROLL_GUARD_KEY] = { touchmove };
+        return;
+    }
+
+    if (!existing?.touchmove) {
+        return;
+    }
+
+    document.removeEventListener('touchmove', existing.touchmove, true);
+    delete extensionState[PRESET_VUE_TOUCH_SCROLL_GUARD_KEY];
+}
+
+function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = false } = {}) {
+    const prefix = promptManager?.configuration?.prefix ?? '';
+    const prompt = item.prompt;
+    const isEnabled = item.enabled !== false && item.orderEntry?.enabled !== false;
+    const markerClass = prompt.marker ? `${prefix}prompt_manager_marker` : '';
+    const importantClass = getPromptImportantClass(prompt, prefix);
+    const manager = getPresetVuePromptListManagerState();
+    const rangeClasses = getPresetVuePromptRangeClasses(manager.state, item);
+
+    return h('li', {
+        class: [
+            `${prefix}prompt_manager_prompt`,
+            `${prefix}prompt_manager_prompt_draggable`,
+            topLevel ? PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS : '',
+            groupChild ? PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS : '',
+            isEnabled ? '' : `${prefix}prompt_manager_prompt_disabled`,
+            markerClass,
+            importantClass,
+            ...rangeClasses,
+        ],
+        'data-pm-identifier': prompt.identifier,
+        'data-preset-group-id': item.groupId || '',
+        key: prompt.identifier,
+        onClickCapture: event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
+        onClick: event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
+        onMouseenter: () => updatePresetVuePromptRangeSelectionHover(manager.state, item),
+    }, [
+        h('span', { class: 'drag-handle ui-sortable-handle' }, '\u2630'),
+        renderPresetVuePromptNameCell(h, prompt, prefix),
+        h('span', null, [
+            h('span', { class: 'prompt_manager_prompt_controls' }, renderPresetVuePromptControls(h, prompt, item)),
+        ]),
+        h('span', {
+            class: 'prompt_manager_prompt_tokens',
+            'data-pm-tokens': item.calculatedTokens,
+        }, [
+            h('span', {
+                class: item.warningClass,
+                title: item.warningTitle,
+            }, ' '),
+            item.calculatedTokens,
+        ]),
+    ]);
+}
+
+function renderPresetVuePromptNameCell(h, prompt, prefix) {
+    const promptName = prompt.name ?? '';
+    const isMarkerPrompt = prompt.marker && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
+    const isSystemPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && !prompt.forbid_overrides;
+    const isImportantPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && prompt.forbid_overrides;
+    const isUserPrompt = !prompt.marker && !prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
+    const isInjectionPrompt = prompt.injection_position === INJECTION_POSITION.ABSOLUTE;
+    const isOverriddenPrompt = Array.isArray(promptManager.overriddenPrompts) && promptManager.overriddenPrompts.includes(prompt.identifier);
+    const iconLookup = prompt.role === 'system' && (prompt.marker || prompt.system_prompt) ? '' : prompt.role;
+    const promptRoles = {
+        assistant: { roleIcon: 'fa-robot', roleTitle: 'Prompt will be sent as Assistant' },
+        user: { roleIcon: 'fa-user', roleTitle: 'Prompt will be sent as User' },
+    };
+    const role = promptRoles[iconLookup];
+    const children = [];
+
+    if (isMarkerPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-thumb-tack', 'Marker'), ' ');
+    if (isSystemPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-square-poll-horizontal', 'Global Prompt'), ' ');
+    if (isImportantPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-star', 'Important Prompt'), ' ');
+    if (isUserPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-asterisk', 'Preset Prompt'), ' ');
+    if (isInjectionPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-syringe', 'In-Chat Injection'), ' ');
+
+    children.push(promptManager.isPromptInspectionAllowed?.(prompt)
+        ? h('a', { title: promptName, class: 'prompt-manager-inspect-action' }, promptName)
+        : h('span', { title: promptName }, promptName));
+
+    if (role) {
+        children.push(' ', h('span', {
+            'data-role': prompt.role,
+            class: `fa-xs fa-solid ${role.roleIcon}`,
+            title: role.roleTitle,
+        }));
+    }
+
+    if (isInjectionPrompt) {
+        children.push(' ', h('small', { class: 'prompt-manager-injection-depth' }, `@ ${prompt.injection_depth?.toString?.() ?? ''}`));
+    }
+
+    if (isOverriddenPrompt) {
+        children.push(' ', h('small', {
+            class: 'fa-solid fa-address-card prompt-manager-overridden',
+            title: 'Pulled from a character card',
+        }));
+    }
+
+    return h('span', {
+        class: `${prefix}prompt_manager_prompt_name`,
+        'data-pm-name': promptName,
+    }, children);
+}
+
+function renderPresetVueIcon(h, className, title) {
+    return h('span', { class: className, title });
+}
+
+function getPresetPromptGroupState() {
+    const presetName = getPresetPromptGroupRuntimePresetName();
+
+    if (
+        extensionState.presetPromptGroupRuntimePresetName !== presetName
+        || !extensionState.presetPromptGroupRuntimeState
+        || typeof extensionState.presetPromptGroupRuntimeState !== 'object'
+    ) {
+        const loaded = loadCurrentPresetPromptGroupStateFromPreset();
+        extensionState.presetPromptGroupRuntimePresetName = presetName;
+        extensionState.presetPromptGroupRuntimeState = loaded.state;
+
+        if (loaded.shouldPersist) {
+            savePresetPromptGroupSettings({ immediate: true });
+        }
+    }
+
+    return extensionState.presetPromptGroupRuntimeState;
+}
+
+function getPresetPromptGroupRuntimePresetName() {
+    return oai_settings?.preset_settings_openai || 'current';
+}
+
+function createEmptyPresetPromptGroupState() {
+    return {
+        groups: [],
+        prompts: {},
+    };
+}
+
+function loadCurrentPresetPromptGroupStateFromPreset() {
+    const validPromptIds = getCurrentPresetPromptOrderIds();
+    const importedState = readCurrentPresetPromptGroupExtensionState(validPromptIds);
+
+    if (importedState) {
+        return {
+            state: importedState,
+            shouldPersist: false,
+        };
+    }
+
+    const compatCandidates = getCompatPresetPromptGroupStateCandidates(validPromptIds);
+
+    if (compatCandidates.length > 1) {
+        schedulePresetPromptGroupCompatChoice(compatCandidates, validPromptIds);
+        return {
+            state: createEmptyPresetPromptGroupState(),
+            shouldPersist: false,
+        };
+    }
+
+    const compatCandidate = compatCandidates[0];
+
+    if (compatCandidate) {
+        return {
+            state: compatCandidate.state,
+            shouldPersist: true,
+        };
+    }
+
+    return {
+        state: createEmptyPresetPromptGroupState(),
+        shouldPersist: false,
+    };
+}
+
+function hasPresetPromptGroupStateData(state) {
+    return Boolean(
+        Array.isArray(state?.groups) && state.groups.length > 0
+        && state?.prompts && typeof state.prompts === 'object'
+        && Object.keys(state.prompts).length > 0,
+    );
+}
+
+function normalizePresetPromptGroupState(groupState, validPromptIds = null) {
+    const seenGroupIds = new Set();
+    groupState.groups = groupState.groups
+        .filter(group => group && typeof group === 'object' && group.id)
+        .map((group, index) => ({
+            id: String(group.id),
+            name: String(group.name || t`未命名分组`),
+            order: Number.isFinite(Number(group.order)) ? Number(group.order) : index,
+            collapsed: Boolean(group.collapsed),
+        }))
+        .sort((a, b) => a.order - b.order)
+        .filter(group => {
+            if (seenGroupIds.has(group.id)) {
+                return false;
+            }
+
+            seenGroupIds.add(group.id);
+            return true;
+        })
+        .map((group, index) => ({ ...group, order: index }));
+
+    const validGroupIds = new Set(groupState.groups.map(group => group.id));
+    const normalizedPrompts = {};
+
+    for (const [promptId, meta] of Object.entries(groupState.prompts ?? {})) {
+        const groupId = meta?.groupId;
+
+        if (!groupId || !validGroupIds.has(groupId)) {
+            continue;
+        }
+
+        if (validPromptIds instanceof Set && !validPromptIds.has(promptId)) {
+            continue;
+        }
+
+        normalizedPrompts[promptId] = { groupId };
+    }
+
+    groupState.prompts = normalizedPrompts;
+}
+
+function readCurrentPresetPromptGroupExtensionState(validPromptIds = getCurrentPresetPromptOrderIds()) {
+    const value = readCurrentPresetExtensionField(PRESET_GROUP_EXTENSION_PATH);
+
+    if (!value || typeof value !== 'object') {
+        return null;
+    }
+
+    const groupState = {
+        groups: Array.isArray(value.groups)
+            ? structuredClone(value.groups)
+            : [],
+        prompts: value.prompts && typeof value.prompts === 'object' ? structuredClone(value.prompts) : {},
+    };
+
+    normalizePresetPromptGroupState(groupState, new Set(validPromptIds));
+    return hasPresetPromptGroupStateData(groupState) ? groupState : null;
+}
+
+function getCompatPresetPromptGroupStateCandidates(validPromptIds = getCurrentPresetPromptOrderIds()) {
+    const entryGrouping = readCurrentPresetExtensionField(PRESET_COMPAT_ENTRY_GROUPING_EXTENSION_PATH);
+
+    if (!entryGrouping || !validPromptIds.length) {
+        return [];
+    }
+
+    return [
+        {
+            formatName: t`起止范围格式`,
+            state: convertCompatEntryGroupingRangeToPresetPromptGroupState(entryGrouping, validPromptIds),
+        },
+        {
+            formatName: t`成员列表格式`,
+            state: convertCompatEntryGroupingMembersToPresetPromptGroupState(entryGrouping, validPromptIds),
+        },
+    ].filter(candidate => hasPresetPromptGroupStateData(candidate.state));
+}
+
+function getCompatEntryGroupingEntries(entryGrouping) {
+    if (Array.isArray(entryGrouping)) {
+        return entryGrouping;
+    }
+
+    if (!entryGrouping || typeof entryGrouping !== 'object') {
+        return [];
+    }
+
+    for (const key of ['groups', 'entries', 'entryGroups', 'items']) {
+        if (Array.isArray(entryGrouping[key])) {
+            return entryGrouping[key];
+        }
+    }
+
+    return [];
+}
+
+function convertCompatEntryGroupingRangeToPresetPromptGroupState(entryGrouping, promptIds = getCurrentPresetPromptOrderIds()) {
+    const entries = getCompatEntryGroupingEntries(entryGrouping);
+
+    if (!entries.length || !promptIds.length) {
+        return null;
+    }
+
+    const validPromptIds = new Set(promptIds);
+    const groupState = {
+        groups: [],
+        prompts: {},
+    };
+    const assignedPromptIds = new Set();
+
+    for (const [index, entry] of entries.entries()) {
+        if (!entry || typeof entry !== 'object') {
+            continue;
+        }
+
+        const startIndex = promptIds.indexOf(entry.startIdentifier);
+        const endIndex = promptIds.indexOf(entry.endIdentifier);
+
+        if (startIndex < 0 || endIndex < 0) {
+            continue;
+        }
+
+        const exclusive = String(entry.mode || 'inclusive').toLowerCase() === 'exclusive';
+        const from = Math.min(startIndex, endIndex) + (exclusive ? 1 : 0);
+        const to = Math.max(startIndex, endIndex) - (exclusive ? 1 : 0);
+
+        if (from > to) {
+            continue;
+        }
+
+        const groupId = String(entry.id || uuidv4());
+        groupState.groups.push({
+            id: groupId,
+            name: String(entry.name || t`未命名分组`),
+            order: index,
+            collapsed: true,
+        });
+
+        for (const promptId of promptIds.slice(from, to + 1)) {
+            if (!validPromptIds.has(promptId) || assignedPromptIds.has(promptId)) {
+                continue;
+            }
+
+            assignedPromptIds.add(promptId);
+            groupState.prompts[promptId] = { groupId };
+        }
+    }
+
+    normalizePresetPromptGroupState(groupState, validPromptIds);
+    return hasPresetPromptGroupStateData(groupState) ? groupState : null;
+}
+
+function convertCompatEntryGroupingMembersToPresetPromptGroupState(entryGrouping, promptIds = getCurrentPresetPromptOrderIds()) {
+    const entries = getCompatEntryGroupingEntries(entryGrouping);
+
+    if (!entries.length || !promptIds.length) {
+        return null;
+    }
+
+    const validPromptIds = new Set(promptIds);
+    const groupState = {
+        groups: [],
+        prompts: {},
+    };
+    const assignedPromptIds = new Set();
+
+    for (const [index, entry] of entries.entries()) {
+        if (!entry || typeof entry !== 'object' || !Array.isArray(entry.memberIdentifiers)) {
+            continue;
+        }
+
+        const memberIds = entry.memberIdentifiers
+            .map(identifier => String(identifier || ''))
+            .filter(identifier => validPromptIds.has(identifier) && !assignedPromptIds.has(identifier));
+
+        if (!memberIds.length) {
+            continue;
+        }
+
+        const memberIdSet = new Set(memberIds);
+        const groupId = String(entry.id || uuidv4());
+        groupState.groups.push({
+            id: groupId,
+            name: String(entry.name || t`未命名分组`),
+            order: index,
+            collapsed: true,
+        });
+
+        for (const promptId of promptIds) {
+            if (!memberIdSet.has(promptId)) {
+                continue;
+            }
+
+            assignedPromptIds.add(promptId);
+            groupState.prompts[promptId] = { groupId };
+        }
+    }
+
+    normalizePresetPromptGroupState(groupState, validPromptIds);
+    return hasPresetPromptGroupStateData(groupState) ? groupState : null;
+}
+
+function schedulePresetPromptGroupCompatChoice(candidates, validPromptIds = getCurrentPresetPromptOrderIds()) {
+    const presetName = getPresetPromptGroupRuntimePresetName();
+    const choiceKey = getPresetPromptGroupCompatChoiceKey(presetName, candidates, validPromptIds);
+
+    if (
+        extensionState.presetPromptGroupCompatChoicePendingKey === choiceKey
+        || extensionState.presetPromptGroupCompatChoiceDismissedKey === choiceKey
+    ) {
+        return false;
+    }
+
+    extensionState.presetPromptGroupCompatChoicePendingKey = choiceKey;
+    void choosePresetPromptGroupCompatCandidate(candidates, validPromptIds, presetName, choiceKey);
+    return true;
+}
+
+function getPresetPromptGroupCompatChoiceKey(presetName, candidates, validPromptIds) {
+    const candidateKey = candidates
+        .map(candidate => {
+            const groupNames = candidate.state.groups.map(group => group.name).join(',');
+            return `${candidate.formatName}:${candidate.state.groups.length}:${Object.keys(candidate.state.prompts).length}:${groupNames}`;
+        })
+        .join('|');
+
+    return `${presetName}:${validPromptIds.length}:${candidateKey}`;
+}
+
+async function choosePresetPromptGroupCompatCandidate(candidates, validPromptIds, presetName, choiceKey) {
+    try {
+        const popupResult = await callGenericPopup(
+            renderPresetPromptGroupCompatChoicePopup(candidates),
+            POPUP_TYPE.TEXT,
+            '',
+            {
+                okButton: false,
+                cancelButton: t`取消`,
+                allowVerticalScrolling: true,
+                wider: true,
+                customButtons: candidates.map((candidate, index) => ({
+                    text: t`使用分组${getPresetPromptGroupCompatChoiceLetter(index)}`,
+                    result: PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE + index,
+                    tooltip: candidate.formatName,
+                })),
+            },
+        );
+        const selectedIndex = Number(popupResult) - PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE;
+        const selectedCandidate = candidates[selectedIndex];
+
+        if (!selectedCandidate) {
+            extensionState.presetPromptGroupCompatChoiceDismissedKey = choiceKey;
+            return;
+        }
+
+        if (getPresetPromptGroupRuntimePresetName() !== presetName) {
+            return;
+        }
+
+        extensionState.presetPromptGroupRuntimePresetName = presetName;
+        extensionState.presetPromptGroupRuntimeState = selectedCandidate.state;
+        normalizePresetPromptGroupState(extensionState.presetPromptGroupRuntimeState, new Set(validPromptIds));
+        savePresetPromptGroupSettings({ immediate: true });
+        syncPresetVuePromptListManagerState();
+    } finally {
+        if (extensionState.presetPromptGroupCompatChoicePendingKey === choiceKey) {
+            delete extensionState.presetPromptGroupCompatChoicePendingKey;
+        }
+    }
+}
+
+function renderPresetPromptGroupCompatChoicePopup(candidates) {
+    const lines = candidates
+        .map((candidate, index) => {
+            const letter = getPresetPromptGroupCompatChoiceLetter(index);
+            const groups = candidate.state.groups ?? [];
+            const groupNames = groups.map(group => group.name).filter(Boolean);
+            const previewNames = groupNames.slice(0, 6).map(name => escapeHtml(name));
+            const suffix = groupNames.length > previewNames.length ? '...' : '';
+            const preview = [...previewNames, suffix].filter(Boolean).join('、') || t`无`;
+
+            return `<p><strong>${t`分组`}${letter}</strong>${t`有${groups.length}个分组`}：${preview}</p>`;
+        })
+        .join('');
+
+    return `
+        <div class="bai-bai-preset-group-import-choice">
+            <p>${t`检测到当前预设同时包含两种可兼容的分组格式，请选择要导入的分组。`}</p>
+            ${lines}
+        </div>
+    `;
+}
+
+function getPresetPromptGroupCompatChoiceLetter(index) {
+    return String.fromCharCode(65 + index);
+}
+
+function getCurrentPresetPromptOrderIds() {
+    return (promptManager?.getPromptOrderForCharacter?.(promptManager.activeCharacter) ?? [])
+        .map(entry => entry?.identifier)
+        .filter(Boolean);
+}
+
+function readCurrentPresetExtensionField(path) {
+    const presetName = oai_settings?.preset_settings_openai;
+    const presetManager = getPresetManager('openai');
+
+    if (presetManager && presetName) {
+        const preset = presetManager.getCompletionPresetByName?.(presetName);
+        const presetValue = getObjectPath(preset?.extensions, path);
+
+        if (presetValue !== null && presetValue !== undefined) {
+            return presetValue;
+        }
+    }
+
+    const settingsValue = getObjectPath(oai_settings?.extensions, path);
+
+    if (settingsValue !== null && settingsValue !== undefined) {
+        return settingsValue;
+    }
+
+    return null;
+}
+
+function getObjectPath(source, path) {
+    if (!source || typeof source !== 'object') {
+        return null;
+    }
+
+    return String(path || '')
+        .split('.')
+        .filter(Boolean)
+        .reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), source) ?? null;
+}
+
+function setObjectPath(target, path, value) {
+    if (!target || typeof target !== 'object') {
+        return;
+    }
+
+    const parts = String(path || '').split('.').filter(Boolean);
+    let cursor = target;
+
+    for (let index = 0; index < parts.length - 1; index++) {
+        const key = parts[index];
+
+        if (!cursor[key] || typeof cursor[key] !== 'object') {
+            cursor[key] = {};
+        }
+
+        cursor = cursor[key];
+    }
+
+    cursor[parts[parts.length - 1]] = value;
+}
+
+function savePresetPromptGroupSettings({ immediate = false, force = false } = {}) {
+    const payload = getCurrentPresetPromptGroupExtensionPayload();
+    const changed = syncCurrentPresetPromptGroupStateToPresetExtensionField({ force, persist: immediate, payload });
+
+    if (changed && !immediate) {
+        markPresetPromptGroupSettingsSavePending(payload);
+    }
+
+    return changed;
+}
+
+function getCurrentPresetPromptGroupExtensionPayload() {
+    const presetName = oai_settings?.preset_settings_openai;
+    const presetManager = getPresetManager('openai');
+
+    if (!presetName) {
+        return null;
+    }
+
+    const promptIds = getCurrentPresetPromptOrderIds();
+
+    if (!promptIds.length) {
+        return null;
+    }
+
+    const groupState = getSerializableCurrentPresetPromptGroupState(promptIds);
+    const existingPresetGroupState = readCurrentPresetExtensionField(PRESET_GROUP_EXTENSION_PATH);
+
+    if (!hasPresetPromptGroupStateData(groupState) && !existingPresetGroupState) {
+        return null;
+    }
+
+    const serialized = JSON.stringify(groupState);
+    return {
+        presetName,
+        presetManager,
+        groupState,
+        syncKey: `${presetName}:${serialized}`,
+    };
+}
+
+function applyPresetPromptGroupExtensionPayloadToMemory(payload) {
+    if (!payload) {
+        return;
+    }
+
+    if (oai_settings?.preset_settings_openai === payload.presetName) {
+        oai_settings.extensions = oai_settings.extensions && typeof oai_settings.extensions === 'object'
+            ? oai_settings.extensions
+            : {};
+        setObjectPath(oai_settings.extensions, PRESET_GROUP_EXTENSION_PATH, payload.groupState);
+    }
+
+    const preset = payload.presetManager?.getCompletionPresetByName?.(payload.presetName);
+
+    if (preset) {
+        preset.extensions = preset.extensions && typeof preset.extensions === 'object'
+            ? preset.extensions
+            : {};
+        setObjectPath(preset.extensions, PRESET_GROUP_EXTENSION_PATH, payload.groupState);
+    }
+}
+
+function syncCurrentPresetPromptGroupStateToPresetExtensionField({ force = false, persist = true, payload = null } = {}) {
+    payload ||= getCurrentPresetPromptGroupExtensionPayload();
+
+    if (!payload) {
+        return false;
+    }
+
+    if (!force && persist && extensionState.presetPromptGroupExtensionSyncKey === payload.syncKey) {
+        return false;
+    }
+
+    applyPresetPromptGroupExtensionPayloadToMemory(payload);
+
+    if (!persist) {
+        return true;
+    }
+
+    extensionState.presetPromptGroupExtensionSyncKey = payload.syncKey;
+
+    if (!payload.presetManager) {
+        return false;
+    }
+
+    void payload.presetManager.writePresetExtensionField({
+        name: payload.presetName,
+        path: PRESET_GROUP_EXTENSION_PATH,
+        value: payload.groupState,
+    }).catch(error => {
+        if (extensionState.presetPromptGroupExtensionSyncKey === payload.syncKey) {
+            delete extensionState.presetPromptGroupExtensionSyncKey;
+        }
+        console.debug(`${LOG_PREFIX} Failed to save preset prompt groups to preset extension field`, error);
+    });
+    return true;
+}
+
+async function flushCurrentPresetPromptGroupSettings({ force = false } = {}) {
+    const payload = getCurrentPresetPromptGroupExtensionPayload();
+
+    if (!payload) {
+        return false;
+    }
+
+    if (!force && extensionState.presetPromptGroupExtensionSyncKey === payload.syncKey) {
+        return false;
+    }
+
+    applyPresetPromptGroupExtensionPayloadToMemory(payload);
+    extensionState.presetPromptGroupExtensionSyncKey = payload.syncKey;
+
+    if (!payload.presetManager) {
+        return false;
+    }
+
+    try {
+        await payload.presetManager.writePresetExtensionField({
+            name: payload.presetName,
+            path: PRESET_GROUP_EXTENSION_PATH,
+            value: payload.groupState,
+        });
+        return true;
+    } catch (error) {
+        if (extensionState.presetPromptGroupExtensionSyncKey === payload.syncKey) {
+            delete extensionState.presetPromptGroupExtensionSyncKey;
+        }
+        throw error;
+    }
+}
+
+function getSerializableCurrentPresetPromptGroupState(promptIds = getCurrentPresetPromptOrderIds()) {
+    const groupState = getPresetPromptGroupState();
+    const serializable = {
+        version: 1,
+        groups: structuredClone(groupState.groups ?? []),
+        prompts: structuredClone(groupState.prompts ?? {}),
+    };
+
+    normalizePresetPromptGroupState(serializable, new Set(promptIds));
+    return serializable;
+}
+
+async function startPresetVuePromptGroupRangeSelection(model, { startId = null } = {}) {
+    const promptIds = getPresetVuePromptFlatIds(model);
+
+    if (promptIds.length === 0) {
+        toastr.warning(t`没有可用于分组的预设条目。`);
+        return;
+    }
+
+    if (startId && !promptIds.includes(startId)) {
+        toastr.warning(t`不能将这个预设条目作为分组起点。`);
+        return;
+    }
+
+    const name = await callGenericPopup(t`预设分组名称`, POPUP_TYPE.INPUT, '', {
+        okButton: t`保存`,
+        cancelButton: t`取消`,
+    });
+
+    if (typeof name !== 'string') {
+        return;
+    }
+
+    const trimmedName = name.trim();
+
+    if (!trimmedName) {
+        toastr.warning(t`分组名称不能为空。`);
+        return;
+    }
+
+    model.rangeSelection = {
+        active: true,
+        name: trimmedName,
+        startId,
+        endId: null,
+        hoverId: startId,
+    };
+    getPresetVuePromptListManagerState().dragSnapshot = null;
+    toastr.info(startId ? t`请选择分组的结束条目。` : t`请选择分组的起始条目。`);
+}
+
+function cancelPresetVuePromptGroupRangeSelection(model) {
+    if (!model) {
+        return;
+    }
+
+    model.rangeSelection = {
+        active: false,
+        name: '',
+        startId: null,
+        endId: null,
+        hoverId: null,
+    };
+}
+
+function handlePresetVuePromptRangeSelectionClick(model, item, event) {
+    if (!model?.rangeSelection?.active || item?.type !== 'prompt') {
+        return;
+    }
+
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+
+    if (!model.rangeSelection.startId) {
+        model.rangeSelection.startId = item.id;
+        model.rangeSelection.hoverId = item.id;
+        toastr.info(t`请选择分组的结束条目。`);
+        return;
+    }
+
+    if (model.rangeSelection.startId === item.id && !model.rangeSelection.endId) {
+        model.rangeSelection.startId = null;
+        model.rangeSelection.hoverId = null;
+        toastr.info(t`已取消起点选择，请重新选择分组的起始条目。`);
+        return;
+    }
+
+    model.rangeSelection.endId = item.id;
+    void finishPresetVuePromptGroupRangeSelection(model);
+}
+
+function updatePresetVuePromptRangeSelectionHover(model, item) {
+    if (!model?.rangeSelection?.active || !model.rangeSelection.startId || model.rangeSelection.endId || item?.type !== 'prompt') {
+        return;
+    }
+
+    model.rangeSelection.hoverId = item.id;
+}
+
+async function finishPresetVuePromptGroupRangeSelection(model) {
+    const rangeIds = getPresetVuePromptRangeIds(model);
+
+    if (rangeIds.length === 0) {
+        toastr.warning(t`没有选中可分组的预设条目。`);
+        cancelPresetVuePromptGroupRangeSelection(model);
+        return;
+    }
+
+    const confirmed = await callGenericPopup(t`要用选中的预设条目创建分组吗？`, POPUP_TYPE.CONFIRM);
+
+    if (!confirmed) {
+        model.rangeSelection.endId = null;
+        return;
+    }
+
+    const groupState = getPresetPromptGroupState();
+    normalizePresetPromptGroupState(groupState, new Set(getPresetVuePromptFlatIds(model)));
+    const groupId = uuidv4();
+    groupState.groups.push({
+        id: groupId,
+        name: model.rangeSelection.name,
+        order: groupState.groups.length,
+        collapsed: false,
+    });
+
+    for (const promptId of rangeIds) {
+        groupState.prompts[promptId] = { groupId };
+    }
+
+    removeUnusedPresetPromptGroups(groupState);
+    getPresetVuePromptListManagerState().dragSnapshot = null;
+    cancelPresetVuePromptGroupRangeSelection(model);
+    savePresetPromptGroupSettings();
+    syncPresetVuePromptListManagerState();
+}
+
+function getPresetVuePromptFlatIds(model = getPresetVuePromptListManagerState().state) {
+    const seenPromptIds = new Set();
+    const promptIds = [];
+
+    for (const item of getPresetVuePromptItemsFromModel(model)) {
+        if (!item?.id || seenPromptIds.has(item.id)) {
+            continue;
+        }
+
+        seenPromptIds.add(item.id);
+        promptIds.push(item.id);
+    }
+
+    return promptIds;
+}
+
+function getPresetVuePromptItemsFromModel(model = getPresetVuePromptListManagerState().state) {
+    const promptItems = [];
+
+    for (const item of model?.items ?? []) {
+        if (item?.type === 'prompt') {
+            promptItems.push(item);
+            continue;
+        }
+
+        if (item?.type === 'group') {
+            promptItems.push(...(item.children ?? []).filter(child => child?.type === 'prompt'));
+        }
+    }
+
+    return promptItems;
+}
+
+function sanitizePresetVuePromptListModel(model) {
+    if (!Array.isArray(model?.items)) {
+        return false;
+    }
+
+    const nextItems = [];
+    const seenPromptIds = new Set();
+    const seenStaticIds = new Set();
+    const groupById = new Map();
+    let changed = false;
+
+    const pushPromptOnce = (promptItem, targetItems) => {
+        if (!promptItem?.id || promptItem.type !== 'prompt') {
+            changed = true;
+            return;
+        }
+
+        if (seenPromptIds.has(promptItem.id)) {
+            changed = true;
+            return;
+        }
+
+        seenPromptIds.add(promptItem.id);
+        targetItems.push(promptItem);
+    };
+
+    for (const item of model.items) {
+        if (item?.type === 'header' || item?.type === 'separator') {
+            if (seenStaticIds.has(item.type)) {
+                changed = true;
+                continue;
+            }
+
+            seenStaticIds.add(item.type);
+            nextItems.push(item);
+            continue;
+        }
+
+        if (item?.type === 'prompt') {
+            pushPromptOnce(item, nextItems);
+            continue;
+        }
+
+        if (item?.type === 'group') {
+            const children = Array.isArray(item.children) ? [...item.children] : [];
+
+            if (!item.groupId) {
+                changed = true;
+                continue;
+            }
+
+            let groupItem = groupById.get(item.groupId);
+
+            if (!groupItem) {
+                groupItem = item;
+                groupItem.children = [];
+                groupById.set(item.groupId, groupItem);
+                nextItems.push(groupItem);
+            } else {
+                changed = true;
+            }
+
+            for (const child of children) {
+                pushPromptOnce(child, groupItem.children);
+            }
+
+            groupItem.count = groupItem.children.length;
+            continue;
+        }
+
+        changed = true;
+    }
+
+    if (!changed && nextItems.length === model.items.length) {
+        return false;
+    }
+
+    model.items = nextItems;
+    return true;
+}
+
+function getPresetVuePromptRangeIds(model, { includeHover = false } = {}) {
+    const selection = model?.rangeSelection;
+    const rangeEndId = selection?.endId || (includeHover ? selection?.hoverId : null);
+
+    if (!selection?.startId || !rangeEndId) {
+        return [];
+    }
+
+    const ids = getPresetVuePromptFlatIds(model);
+    const startIndex = ids.indexOf(selection.startId);
+    const endIndex = ids.indexOf(rangeEndId);
+
+    if (startIndex < 0 || endIndex < 0) {
+        return [];
+    }
+
+    const from = Math.min(startIndex, endIndex);
+    const to = Math.max(startIndex, endIndex);
+    return ids.slice(from, to + 1);
+}
+
+function getPresetVuePromptRangeClasses(model, item) {
+    const selection = model?.rangeSelection;
+
+    if (!selection?.active || item?.type !== 'prompt') {
+        return [];
+    }
+
+    const classes = ['bai-bai-preset-range-selectable'];
+
+    if (selection.startId === item.id) {
+        classes.push('bai-bai-preset-range-start');
+    }
+
+    if ((selection.endId || selection.hoverId) === item.id && selection.startId) {
+        classes.push('bai-bai-preset-range-end');
+    }
+
+    const rangeIds = getPresetVuePromptRangeIds(model, { includeHover: true });
+
+    if (rangeIds.includes(item.id)) {
+        classes.push('bai-bai-preset-range-inside');
+    }
+
+    return classes;
+}
+
+function togglePresetVuePromptGroupCollapsed(groupId) {
+    const groupState = getPresetPromptGroupState();
+    const group = groupState.groups.find(group => group.id === groupId);
+
+    if (!group) {
+        return;
+    }
+
+    group.collapsed = !group.collapsed;
+    const modelGroup = getPresetVuePromptListManagerState().state?.items?.find(item => item?.type === 'group' && item.groupId === groupId);
+
+    if (modelGroup) {
+        modelGroup.collapsed = group.collapsed;
+
+        if (modelGroup.group) {
+            modelGroup.group.collapsed = group.collapsed;
+        }
+    }
+
+    savePresetPromptGroupSettings();
+}
+
+function togglePresetVuePromptGroupEnabled(groupId) {
+    const manager = getPresetVuePromptListManagerState();
+    const groupItem = manager.state?.items?.find(item => item?.type === 'group' && item.groupId === groupId);
+    const children = Array.isArray(groupItem?.children) ? groupItem.children : [];
+
+    if (!children.length || !promptManager?.activeCharacter || typeof promptManager.getPromptOrderEntry !== 'function') {
+        return;
+    }
+
+    const nextEnabled = !isPresetVuePromptGroupFullyEnabled(groupItem);
+    const counts = promptManager.tokenHandler?.getCounts?.();
+
+    for (const child of children) {
+        if (!child?.id) {
+            continue;
+        }
+
+        const promptOrderEntry = promptManager.getPromptOrderEntry(promptManager.activeCharacter, child.id) ?? child.orderEntry;
+
+        if (!promptOrderEntry) {
+            continue;
+        }
+
+        promptOrderEntry.enabled = nextEnabled;
+        child.enabled = nextEnabled;
+        child.orderEntry = promptOrderEntry;
+
+        if (counts) {
+            counts[child.id] = null;
+        }
+    }
+
+    void Promise.resolve(promptManager.saveServiceSettings?.()).catch(error => {
+        console.debug(`${LOG_PREFIX} Failed to save preset prompt group toggle state`, error);
+    });
+
+    refreshPromptManagerTokensDebounced();
+}
+
+async function renamePresetVuePromptGroup(groupId) {
+    const groupState = getPresetPromptGroupState();
+    const group = groupState.groups.find(group => group.id === groupId);
+
+    if (!group) {
+        return;
+    }
+
+    const name = await callGenericPopup(t`预设分组名称`, POPUP_TYPE.INPUT, group.name || '', {
+        okButton: t`保存`,
+        cancelButton: t`取消`,
+    });
+
+    if (typeof name !== 'string') {
+        return;
+    }
+
+    const trimmedName = name.trim();
+
+    if (!trimmedName) {
+        toastr.warning(t`分组名称不能为空。`);
+        return;
+    }
+
+    group.name = trimmedName;
+    savePresetPromptGroupSettings();
+    syncPresetVuePromptListManagerState();
+}
+
+async function deletePresetVuePromptGroup(groupId) {
+    const groupState = getPresetPromptGroupState();
+    const group = groupState.groups.find(group => group.id === groupId);
+
+    if (!group) {
+        return;
+    }
+
+    const confirmed = await callGenericPopup(t`要删除这个预设分组吗？预设条目会保留在原位置。`, POPUP_TYPE.CONFIRM);
+
+    if (!confirmed) {
+        return;
+    }
+
+    groupState.groups = groupState.groups.filter(group => group.id !== groupId);
+
+    for (const [promptId, meta] of Object.entries(groupState.prompts ?? {})) {
+        if (meta?.groupId === groupId) {
+            delete groupState.prompts[promptId];
+        }
+    }
+
+    normalizePresetPromptGroupState(groupState, new Set(getPresetVuePromptFlatIds()));
+    savePresetPromptGroupSettings();
+    syncPresetVuePromptListManagerState();
+}
+
+function renderPresetVuePromptControls(h, prompt, item) {
+    const canDelete = promptManager.isPromptDeletionAllowed?.(prompt) ?? false === prompt.system_prompt;
+    const canEdit = promptManager.isPromptEditAllowed?.(prompt) ?? (FORCE_EDIT_PROMPTS.has(prompt.identifier) || !prompt.marker);
+    const canToggle = promptManager.isPromptToggleAllowed?.(prompt) ?? (
+        prompt.marker && !FORCE_TOGGLE_PROMPTS.has(prompt.identifier)
+            ? false
+            : !(promptManager.configuration.toggleDisabled ?? []).includes(prompt.identifier)
+    );
+    const isEnabled = item.enabled !== false && item.orderEntry?.enabled !== false;
+
+    return [
+        h('span', {
+            title: t`更多操作`,
+            class: 'menu_button bai-bai-preset-prompt-icon-button bai-bai-preset-prompt-actions-hint fa-solid fa-ellipsis',
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation?.();
+                togglePresetPromptActionMenu(event.currentTarget);
+            },
+        }),
+        h('span', { class: 'bai-bai-preset-prompt-actions' }, [
+            canEdit
+                ? renderPresetVuePromptActionButton(h, {
+                    action: 'edit',
+                    icon: 'fa-pencil',
+                    text: t`编辑`,
+                    onClick: event => handlePresetPromptActionButtonClick(event),
+                })
+                : null,
+            renderPresetVuePromptActionButton(h, {
+                action: 'copy',
+                icon: 'fa-copy',
+                text: t`复制`,
+                onClick: event => handlePresetPromptActionButtonClick(event),
+            }),
+            canDelete
+                ? renderPresetVuePromptActionButton(h, {
+                    action: 'delete',
+                    icon: 'fa-trash',
+                    text: t`删除`,
+                    caution: true,
+                    onClick: event => handlePresetPromptActionButtonClick(event),
+                })
+                : null,
+        ].filter(Boolean)),
+        canToggle
+            ? h('span', {
+                title: isEnabled ? t`关闭条目` : t`开启条目`,
+                class: [
+                    'menu_button',
+                    'bai-bai-preset-prompt-icon-button',
+                    'prompt-manager-toggle-action',
+                    isEnabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off',
+                ],
+            })
+            : null,
+    ];
+}
+
+function renderPresetVuePromptActionButton(h, { action, icon, text, caution = false, onClick = null }) {
+    return h('span', {
+        class: [
+            'menu_button',
+            'bai-bai-preset-prompt-action-button',
+            'fa-solid',
+            icon,
+            caution ? 'caution' : '',
+        ],
+        title: text,
+        'data-preset-prompt-action': action,
+        onClick,
+    });
+}
+
+function renderPresetPromptControlsHtml({ canDelete, canEdit, canToggle, isEnabled }) {
+    const toggleSpanHtml = canToggle
+        ? `<span title="${escapeHtml(isEnabled ? t`关闭条目` : t`开启条目`)}" class="menu_button bai-bai-preset-prompt-icon-button prompt-manager-toggle-action fa-solid ${isEnabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></span>`
+        : '';
+    const editItemHtml = canEdit
+        ? renderPresetPromptActionButtonHtml({
+            action: 'edit',
+            icon: 'fa-pencil',
+            text: t`编辑`,
+        })
+        : '';
+    const copyItemHtml = renderPresetPromptActionButtonHtml({
+        action: 'copy',
+        icon: 'fa-copy',
+        text: t`复制`,
+    });
+    const deleteItemHtml = canDelete
+        ? renderPresetPromptActionButtonHtml({
+            action: 'delete',
+            icon: 'fa-trash',
+            text: t`删除`,
+            caution: true,
+        })
+        : '';
+
+    return `
+        <span title="${escapeHtml(t`更多操作`)}" class="menu_button bai-bai-preset-prompt-icon-button bai-bai-preset-prompt-actions-hint fa-solid fa-ellipsis"></span>
+        <span class="bai-bai-preset-prompt-actions">
+            ${editItemHtml}
+            ${copyItemHtml}
+            ${deleteItemHtml}
+        </span>
+        ${toggleSpanHtml}
+    `;
+}
+
+function renderPresetPromptActionButtonHtml({ action, icon, text, caution = false }) {
+    return `<span title="${escapeHtml(text)}" data-preset-prompt-action="${escapeHtml(action)}" class="menu_button bai-bai-preset-prompt-action-button fa-solid ${icon}${caution ? ' caution' : ''}"></span>`;
+}
+
+function schedulePresetVuePromptOrderSaveAfterDrop() {
+    const manager = getPresetVuePromptListManagerState();
+    clearPresetVuePromptOrderSaveSchedule(manager);
+    savePresetVuePromptOrderFromModelSafely();
+}
+
+function clearPresetVuePromptOrderSaveSchedule(manager = getPresetVuePromptListManagerState()) {
+    if (manager.saveFrame !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(manager.saveFrame);
+    }
+
+    if (manager.saveTimer !== null) {
+        clearTimeout(manager.saveTimer);
+    }
+
+    manager.saveFrame = null;
+    manager.saveTimer = null;
+}
+
+async function flushScheduledPresetVuePromptOrderSave() {
+    const manager = getPresetVuePromptListManagerState();
+    const hasScheduledSave = manager.saveFrame !== null || manager.saveTimer !== null;
+
+    if (!hasScheduledSave) {
+        return false;
+    }
+
+    clearPresetVuePromptOrderSaveSchedule(manager);
+    await savePresetVuePromptOrderFromModel();
+    return true;
+}
+
+function getPendingPresetPromptServiceSaves(manager = getPresetVuePromptListManagerState()) {
+    if (!(manager.pendingPresetPromptServiceSaves instanceof Map)) {
+        manager.pendingPresetPromptServiceSaves = new Map();
+    }
+
+    return manager.pendingPresetPromptServiceSaves;
+}
+
+function getPendingPresetPromptGroupSaves(manager = getPresetVuePromptListManagerState()) {
+    if (!(manager.pendingPresetPromptGroupSaves instanceof Map)) {
+        manager.pendingPresetPromptGroupSaves = new Map();
+    }
+
+    return manager.pendingPresetPromptGroupSaves;
+}
+
+function markPresetPromptServiceSettingsSavePending() {
+    const manager = getPresetVuePromptListManagerState();
+    const entry = createPendingPresetPromptServiceSaveEntry();
+
+    if (!entry) {
+        return;
+    }
+
+    getPendingPresetPromptServiceSaves(manager).set(entry.presetName, entry);
+    manager.pendingServiceSettingsSave = true;
+    markPresetPromptChangesSavePending();
+}
+
+function createPendingPresetPromptServiceSaveEntry() {
+    const presetName = getPresetPromptGroupRuntimePresetName();
+    const promptOrder = promptManager?.serviceSettings?.prompt_order ?? oai_settings?.prompt_order;
+
+    if (!presetName || !promptOrder) {
+        return null;
+    }
+
+    return {
+        presetName,
+        promptOrder: structuredClone(promptOrder),
+    };
+}
+
+function markPresetPromptGroupSettingsSavePending(payload = null) {
+    const manager = getPresetVuePromptListManagerState();
+    payload ||= getCurrentPresetPromptGroupExtensionPayload();
+
+    if (!payload) {
+        return;
+    }
+
+    getPendingPresetPromptGroupSaves(manager).set(payload.presetName, {
+        presetName: payload.presetName,
+        groupState: structuredClone(payload.groupState),
+        syncKey: payload.syncKey,
+    });
+    manager.pendingGroupSettingsSave = true;
+    markPresetPromptChangesSavePending();
+}
+
+function markPresetPromptChangesSavePending() {
+    installPresetPendingChangesLifecycleGuard();
+    schedulePendingPresetPromptChangesFlushCheck(0);
+}
+
+function hasPendingPresetPromptChanges() {
+    const manager = getPresetVuePromptListManagerState();
+    return Boolean(
+        manager.pendingServiceSettingsSave
+        || manager.pendingGroupSettingsSave
+        || getPendingPresetPromptServiceSaves(manager).size > 0
+        || getPendingPresetPromptGroupSaves(manager).size > 0,
+    );
+}
+
+function clearPendingPresetPromptChanges() {
+    const manager = getPresetVuePromptListManagerState();
+    manager.pendingServiceSettingsSave = false;
+    manager.pendingGroupSettingsSave = false;
+    getPendingPresetPromptServiceSaves(manager).clear();
+    getPendingPresetPromptGroupSaves(manager).clear();
+    removePresetPromptManagerVisibilityWatch();
+}
+
+function installPresetPendingChangesLifecycleGuard() {
+    if (extensionState[PRESET_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY]) {
+        return;
+    }
+
+    const beforeUnloadHandler = (event) => {
+        const manager = getPresetVuePromptListManagerState();
+
+        if (!hasPendingPresetPromptChanges() && !manager.pendingChangesSaveInFlight && !manager.pendingChangesSavePromise) {
+            return;
+        }
+
+        void flushPendingPresetPromptChanges().catch(error => {
+            console.debug(`${LOG_PREFIX} Failed to flush preset prompt changes before unload`, error);
+        });
+        event.preventDefault();
+        event.returnValue = '';
+        return '';
+    };
+
+    const pageLifecycleHandler = (event) => {
+        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+            return;
+        }
+
+        if (!hasPendingPresetPromptChanges()) {
+            return;
+        }
+
+        void flushPendingPresetPromptChanges().catch(error => {
+            console.debug(`${LOG_PREFIX} Failed to flush preset prompt changes during page lifecycle event`, error);
+        });
+    };
+
+    extensionState[PRESET_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY] = {
+        beforeUnloadHandler,
+        pageLifecycleHandler,
+    };
+
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    window.addEventListener('pagehide', pageLifecycleHandler);
+    document.addEventListener('visibilitychange', pageLifecycleHandler);
+}
+
+function schedulePendingPresetPromptChangesFlushCheck(delayMs = PRESET_PENDING_CHANGES_VISIBILITY_CHECK_DELAY_MS) {
+    const manager = getPresetVuePromptListManagerState();
+    installPresetPromptManagerVisibilityObserver();
+    clearTimeout(manager.pendingVisibilityTimer);
+    manager.pendingVisibilityTimer = setTimeout(() => {
+        manager.pendingVisibilityTimer = null;
+        checkPendingPresetPromptChangesFlush();
+    }, delayMs);
+}
+
+function installPresetPromptManagerVisibilityObserver() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.pendingVisibilityObserver || typeof MutationObserver !== 'function') {
+        return;
+    }
+
+    const observer = new MutationObserver(() => {
+        schedulePendingPresetPromptChangesFlushCheck();
+    });
+
+    manager.pendingVisibilityObserver = observer;
+
+    for (const target of getPresetPromptManagerVisibilityTargets()) {
+        observer.observe(target, {
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+        });
+    }
+}
+
+function removePresetPromptManagerVisibilityWatch() {
+    const manager = getPresetVuePromptListManagerState();
+    clearTimeout(manager.pendingVisibilityTimer);
+    manager.pendingVisibilityTimer = null;
+
+    if (manager.pendingVisibilityObserver) {
+        manager.pendingVisibilityObserver.disconnect();
+        manager.pendingVisibilityObserver = null;
+    }
+}
+
+function getPresetPromptManagerVisibilityTargets() {
+    const targets = [];
+    const seen = new Set();
+    const add = element => {
+        if (element instanceof HTMLElement && !seen.has(element)) {
+            seen.add(element);
+            targets.push(element);
+        }
+    };
+    const container = promptManager?.containerElement instanceof HTMLElement
+        ? promptManager.containerElement
+        : document.querySelector('#completion_prompt_manager');
+
+    add(container);
+
+    if (container instanceof HTMLElement) {
+        for (let element = container.parentElement; element && element !== document.body; element = element.parentElement) {
+            add(element);
+        }
+    }
+
+    return targets;
+}
+
+function checkPendingPresetPromptChangesFlush() {
+    if (!hasPendingPresetPromptChanges()) {
+        removePresetPromptManagerVisibilityWatch();
+        return;
+    }
+
+    if (!isPresetPromptManagerVisible()) {
+        flushPendingPresetPromptChangesSafely();
+        return;
+    }
+
+    schedulePendingPresetPromptChangesFlushCheck(PRESET_PENDING_CHANGES_VISIBILITY_FALLBACK_DELAY_MS);
+}
+
+function isPresetPromptManagerVisible() {
+    const container = promptManager?.containerElement instanceof HTMLElement
+        ? promptManager.containerElement
+        : document.querySelector('#completion_prompt_manager');
+
+    return isPresetVisibilityElementVisible(container);
+}
+
+function isPresetVisibilityElementVisible(element) {
+    if (!(element instanceof HTMLElement) || !element.isConnected || element.getClientRects().length === 0) {
+        return false;
+    }
+
+    const style = getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+function flushPendingPresetPromptChangesSafely() {
+    void flushPendingPresetPromptChanges().catch(error => {
+        console.debug(`${LOG_PREFIX} Failed to flush preset prompt changes`, error);
+        toastr.error(t`Failed to save preset prompt changes. See console for details.`);
+    });
+}
+
+async function flushPendingPresetPromptChanges() {
+    const manager = getPresetVuePromptListManagerState();
+
+    if (manager.pendingChangesSavePromise) {
+        return manager.pendingChangesSavePromise;
+    }
+
+    await flushScheduledPresetVuePromptOrderSave();
+
+    const pendingServiceSaves = Array.from(getPendingPresetPromptServiceSaves(manager).values());
+    const pendingGroupSaves = Array.from(getPendingPresetPromptGroupSaves(manager).values());
+    const shouldSaveServiceSettings = pendingServiceSaves.length > 0 || Boolean(manager.pendingServiceSettingsSave);
+    const shouldSaveGroups = pendingGroupSaves.length > 0 || Boolean(manager.pendingGroupSettingsSave);
+
+    if (!shouldSaveServiceSettings && !shouldSaveGroups) {
+        removePresetPromptManagerVisibilityWatch();
+        return;
+    }
+
+    manager.pendingChangesSaveInFlight = true;
+    const savePromise = (async () => {
+        try {
+            manager.pendingServiceSettingsSave = false;
+            manager.pendingGroupSettingsSave = false;
+            manager.pendingPresetPromptServiceSaves = new Map();
+            manager.pendingPresetPromptGroupSaves = new Map();
+
+            for (const entry of pendingServiceSaves) {
+                await flushPendingPresetPromptServiceSave(entry);
+            }
+
+            for (const entry of pendingGroupSaves) {
+                await flushPendingPresetPromptGroupSave(entry);
+            }
+        } catch (error) {
+            manager.pendingServiceSettingsSave = manager.pendingServiceSettingsSave || shouldSaveServiceSettings;
+            manager.pendingGroupSettingsSave = manager.pendingGroupSettingsSave || shouldSaveGroups;
+
+            for (const entry of pendingServiceSaves) {
+                getPendingPresetPromptServiceSaves(manager).set(entry.presetName, entry);
+            }
+
+            for (const entry of pendingGroupSaves) {
+                getPendingPresetPromptGroupSaves(manager).set(entry.presetName, entry);
+            }
+
+            throw error;
+        } finally {
+            manager.pendingChangesSaveInFlight = false;
+        }
+    })();
+
+    manager.pendingChangesSavePromise = savePromise;
+
+    try {
+        await savePromise;
+    } finally {
+        if (manager.pendingChangesSavePromise === savePromise) {
+            manager.pendingChangesSavePromise = null;
+        }
+
+        if (hasPendingPresetPromptChanges()) {
+            schedulePendingPresetPromptChangesFlushCheck();
+        } else {
+            removePresetPromptManagerVisibilityWatch();
+        }
+    }
+}
+
+async function flushPendingPresetPromptServiceSave(entry) {
+    if (!entry?.presetName || !entry.promptOrder) {
+        return;
+    }
+
+    const presetManager = getPresetManager('openai');
+    const preset = presetManager?.getCompletionPresetByName?.(entry.presetName);
+
+    if (preset) {
+        preset.prompt_order = structuredClone(entry.promptOrder);
+        await presetManager.savePreset(entry.presetName, preset, { skipUpdate: true });
+    }
+
+    if (oai_settings?.preset_settings_openai === entry.presetName && typeof promptManager?.saveServiceSettings === 'function') {
+        oai_settings.prompt_order = structuredClone(entry.promptOrder);
+        promptManager.serviceSettings = oai_settings;
+        await Promise.resolve(promptManager.saveServiceSettings());
+    }
+}
+
+async function flushPendingPresetPromptGroupSave(entry) {
+    if (!entry?.presetName || !entry.groupState) {
+        return;
+    }
+
+    const presetManager = getPresetManager('openai');
+    const payload = {
+        presetName: entry.presetName,
+        presetManager,
+        groupState: structuredClone(entry.groupState),
+        syncKey: entry.syncKey || `${entry.presetName}:${JSON.stringify(entry.groupState)}`,
+    };
+
+    applyPresetPromptGroupExtensionPayloadToMemory(payload);
+    extensionState.presetPromptGroupExtensionSyncKey = payload.syncKey;
+
+    if (!presetManager) {
+        return;
+    }
+
+    try {
+        await presetManager.writePresetExtensionField({
+            name: payload.presetName,
+            path: PRESET_GROUP_EXTENSION_PATH,
+            value: payload.groupState,
+        });
+    } catch (error) {
+        if (extensionState.presetPromptGroupExtensionSyncKey === payload.syncKey) {
+            delete extensionState.presetPromptGroupExtensionSyncKey;
+        }
+        throw error;
+    }
+}
+
+function savePresetVuePromptOrderFromModelSafely() {
+    void savePresetVuePromptOrderFromModel().catch(error => {
+        console.debug(`${LOG_PREFIX} Failed to save preset prompt order`, error);
+        toastr.error(t`Failed to save preset prompt order. See console for details.`);
+        syncPresetVuePromptListManagerState();
+    });
+}
+
+async function savePresetVuePromptOrderFromModel() {
+    if (!isPromptManagerReadyForCustomDrag()) {
+        return;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    if (!manager.state) {
+        return;
+    }
+
+    sanitizePresetVuePromptListModel(manager.state);
+    const promptOrder = promptManager.getPromptOrderForCharacter(promptManager.activeCharacter) ?? [];
+    const beforeOrder = promptOrder.map(entry => entry?.identifier).filter(Boolean);
+    const nextAssignments = getPresetVuePromptGroupAssignmentsFromModel(manager.state);
+    const afterOrder = getPresetVuePromptFlatIds(manager.state);
+
+    if (areStringArraysEqual(beforeOrder, afterOrder)) {
+        savePresetVuePromptGroupAssignments(nextAssignments);
+        syncPresetVuePromptListManagerState();
+        return;
+    }
+
+    const idToObjectMap = new Map(promptOrder.filter(Boolean).map(entry => [entry.identifier, entry]));
+    const updatedPromptOrder = afterOrder
+        .map(identifier => idToObjectMap.get(identifier))
+        .filter(Boolean);
+
+    promptManager.removePromptOrderForCharacter(promptManager.activeCharacter);
+    promptManager.addPromptOrderForCharacter(promptManager.activeCharacter, updatedPromptOrder);
+    promptManager.log?.(`Prompt order updated for ${promptManager.activeCharacter?.name ?? 'OpenAI preset'}.`);
+    savePresetVuePromptGroupAssignments(nextAssignments, { persist: false });
+    markPresetPromptServiceSettingsSavePending();
+    savePresetPromptGroupSettings();
+    syncPresetVuePromptListManagerState();
+}
+
+function getPresetVuePromptGroupAssignmentsFromModel(model) {
+    const assignments = {};
+
+    for (const item of model?.items ?? []) {
+        if (item?.type === 'group') {
+            for (const child of item.children ?? []) {
+                if (child?.type === 'prompt' && !Object.prototype.hasOwnProperty.call(assignments, child.id)) {
+                    assignments[child.id] = item.groupId;
+                }
+            }
+            continue;
+        }
+
+        if (item?.type === 'prompt' && !Object.prototype.hasOwnProperty.call(assignments, item.id)) {
+            assignments[item.id] = null;
+        }
+    }
+
+    return assignments;
+}
+
+function savePresetVuePromptGroupAssignments(assignments, { persist = true } = {}) {
+    const groupState = getPresetPromptGroupState();
+    const validPromptIds = new Set(getPresetVuePromptFlatIds());
+    normalizePresetPromptGroupState(groupState, validPromptIds);
+    const validGroupIds = new Set(groupState.groups.map(group => group.id));
+    const nextPrompts = {};
+    const usedGroupIds = new Set();
+
+    for (const promptId of validPromptIds) {
+        const groupId = assignments?.[promptId];
+
+        if (!groupId || !validGroupIds.has(groupId)) {
+            continue;
+        }
+
+        nextPrompts[promptId] = { groupId };
+        usedGroupIds.add(groupId);
+    }
+
+    groupState.prompts = nextPrompts;
+    groupState.groups = groupState.groups.filter(group => usedGroupIds.has(group.id));
+    normalizePresetPromptGroupState(groupState, validPromptIds);
+
+    if (persist) {
+        savePresetPromptGroupSettings();
+    }
+}
+
+function removeUnusedPresetPromptGroups(groupState) {
+    const usedGroupIds = new Set(
+        Object.values(groupState.prompts ?? {})
+            .map(meta => meta?.groupId)
+            .filter(Boolean),
+    );
+
+    groupState.groups = groupState.groups.filter(group => usedGroupIds.has(group.id));
+}
+
+function updatePresetVuePromptItemEnabled(promptId, enabled) {
+    const manager = getPresetVuePromptListManagerState();
+    const item = getPresetVuePromptItemsFromModel(manager.state).find(item => item?.id === promptId);
+
+    if (!item) {
+        return;
+    }
+
+    item.enabled = Boolean(enabled);
+
+    if (item.orderEntry) {
+        item.orderEntry.enabled = Boolean(enabled);
     }
 }
 
@@ -1186,11 +4858,7 @@ function savePromptManagerDraggedOrder(list) {
     promptManager.removePromptOrderForCharacter(promptManager.activeCharacter);
     promptManager.addPromptOrderForCharacter(promptManager.activeCharacter, updatedPromptOrder);
     promptManager.log?.(`Prompt order updated for ${promptManager.activeCharacter?.name ?? 'OpenAI preset'}.`);
-
-    Promise.resolve(promptManager.saveServiceSettings())
-        .catch(error => {
-            console.debug(`${LOG_PREFIX} Failed to save prompt order after drag`, error);
-        });
+    markPresetPromptServiceSettingsSavePending();
 }
 
 function areStringArraysEqual(left, right) {
@@ -1207,6 +4875,8 @@ function applyPresetSwitchOptimization() {
     applyPresetSelectChangeDeferral();
     applyPresetDeleteSelectionOptimization();
     applyPresetListActionDelegation();
+    applyPresetGroupDeletedCleanup();
+    applyPresetGroupImportCleanup();
     applyPresetSwitchBeforeOptimization();
     applyPresetModelChangeTokenRefreshOptimization();
     applyPresetChatLoadedTokenRefreshOptimization();
@@ -1226,6 +4896,68 @@ function applyPresetSwitchOptimization() {
     } else {
         eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, handler);
     }
+}
+
+function applyPresetGroupDeletedCleanup() {
+    if (extensionState[PRESET_GROUP_PRESET_DELETED_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = (event) => {
+        if (event?.apiId !== 'openai' || !event?.name) {
+            return;
+        }
+
+        resetPresetPromptGroupRuntimeState(event.name);
+    };
+
+    extensionState[PRESET_GROUP_PRESET_DELETED_HANDLER_KEY] = handler;
+    eventSource.on(event_types.PRESET_DELETED, handler);
+}
+
+function applyPresetGroupImportCleanup() {
+    if (extensionState[PRESET_GROUP_PRESET_IMPORT_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = (event) => {
+        const presetName = event?.presetName;
+
+        if (!presetName) {
+            return;
+        }
+
+        collapseImportedPresetPromptGroups(event?.data);
+        resetPresetPromptGroupRuntimeState(presetName);
+    };
+
+    extensionState[PRESET_GROUP_PRESET_IMPORT_HANDLER_KEY] = handler;
+    eventSource.on(event_types.OAI_PRESET_IMPORT_READY, handler);
+}
+
+function collapseImportedPresetPromptGroups(presetData) {
+    const groups = getObjectPath(presetData?.extensions, PRESET_GROUP_EXTENSION_PATH)?.groups;
+
+    if (!Array.isArray(groups)) {
+        return false;
+    }
+
+    for (const group of groups) {
+        if (group && typeof group === 'object') {
+            group.collapsed = true;
+        }
+    }
+
+    return true;
+}
+
+function resetPresetPromptGroupRuntimeState(presetName = null) {
+    if (presetName && extensionState.presetPromptGroupRuntimePresetName !== presetName) {
+        return;
+    }
+
+    delete extensionState.presetPromptGroupRuntimePresetName;
+    delete extensionState.presetPromptGroupRuntimeState;
 }
 
 function applyPresetModelChangeTokenRefreshOptimization() {
@@ -1423,6 +5155,8 @@ async function deleteOpenAiPresetSelectingNext() {
         return;
     }
 
+    clearPendingPresetPromptChanges();
+
     const deletedIndex = Math.max(0, select.selectedIndex);
     const value = openai_setting_names?.[nameToDelete];
 
@@ -1466,25 +5200,69 @@ function escapeCssSelectorValue(value) {
 }
 
 function handlePresetListActionClick(event) {
-    if (!settings.presetSwitchOptimizationEnabled) {
+    if (!settings.presetSwitchOptimizationEnabled && !isPresetGroupingEnabled()) {
         return;
     }
 
     const target = event.target instanceof Element ? event.target : null;
 
-    if (!target?.closest(PRESET_PROMPT_MANAGER_LIST_SELECTOR)) {
+    if (!target) {
+        closePresetPromptActionMenus();
         return;
     }
 
-    const action = target.closest('.prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action');
+    const menuButton = target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-hint`);
+
+    if (menuButton instanceof HTMLElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        togglePresetPromptActionMenu(menuButton);
+        return;
+    }
+
+    if (!target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-hint`)) {
+        closePresetPromptActionMenus();
+    }
+
+    if (!target.closest(PRESET_PROMPT_MANAGER_LIST_SELECTOR)) {
+        return;
+    }
+
+    if (handlePresetVuePromptRangeSelectionDelegatedClick(event, target)) {
+        return;
+    }
+
+    const action = target.closest('[data-preset-prompt-action], .prompt-manager-detach-action, .prompt-manager-inspect-action, .prompt-manager-edit-action');
 
     if (!action) {
         return;
     }
 
-    const handler = action.classList.contains('prompt-manager-detach-action')
+    handlePresetPromptActionButtonClick(event, action);
+}
+
+function handlePresetPromptActionButtonClick(event, action = null) {
+    action ||= event?.currentTarget instanceof Element ? event.currentTarget : null;
+
+    if (!(action instanceof Element)) {
+        return;
+    }
+
+    const presetAction = action.getAttribute('data-preset-prompt-action');
+
+    if (presetAction === 'copy') {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        closePresetPromptActionMenus();
+        void copyPresetPromptEntryFromAction(action);
+        return;
+    }
+
+    const handler = presetAction === 'delete' || action.classList.contains('prompt-manager-detach-action')
         ? promptManager?.handleDetach
-        : action.classList.contains('prompt-manager-inspect-action')
+        : presetAction === 'inspect' || action.classList.contains('prompt-manager-inspect-action')
             ? promptManager?.handleInspect
             : promptManager?.handleEdit;
 
@@ -1492,9 +5270,10 @@ function handlePresetListActionClick(event) {
         return;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    closePresetPromptActionMenus();
 
     try {
         handler.call(promptManager, event);
@@ -1504,8 +5283,191 @@ function handlePresetListActionClick(event) {
     }
 }
 
+function togglePresetPromptActionMenu(button) {
+    const wrapper = button.closest('.prompt_manager_prompt_controls');
+
+    if (!(wrapper instanceof HTMLElement)) {
+        return;
+    }
+
+    const actions = wrapper.querySelector('.bai-bai-preset-prompt-actions');
+
+    if (!(actions instanceof HTMLElement)) {
+        return;
+    }
+
+    const wasOpen = actions.classList.contains('bai-bai-preset-prompt-actions-visible');
+    closePresetPromptActionMenus({ except: wrapper });
+    actions.classList.toggle('bai-bai-preset-prompt-actions-visible', !wasOpen);
+    wrapper.querySelector('.bai-bai-preset-prompt-actions-hint')?.classList.toggle('bai-bai-preset-prompt-actions-hint-hidden', !wasOpen);
+}
+
+function closePresetPromptActionMenus({ except = null } = {}) {
+    document.querySelectorAll(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-actions-visible`).forEach(actions => {
+        const wrapper = actions.closest('.prompt_manager_prompt_controls');
+
+        if (wrapper === except) {
+            return;
+        }
+
+        actions.classList.remove('bai-bai-preset-prompt-actions-visible');
+        wrapper?.querySelector('.bai-bai-preset-prompt-actions-hint')?.classList.remove('bai-bai-preset-prompt-actions-hint-hidden');
+    });
+}
+
+async function copyPresetPromptEntryFromAction(action) {
+    const row = action.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt[data-pm-identifier]`);
+    const promptId = row?.dataset?.pmIdentifier;
+
+    if (!promptId) {
+        return;
+    }
+
+    await copyPresetPromptEntry(promptId);
+}
+
+async function copyPresetPromptEntry(promptId) {
+    if (!promptManager?.activeCharacter || !Array.isArray(promptManager.serviceSettings?.prompts)) {
+        toastr.warning(t`当前无法复制这个预设条目。`);
+        return false;
+    }
+
+    const sourcePrompt = promptManager.getPromptById?.(promptId);
+    const promptOrder = promptManager.getPromptOrderForCharacter?.(promptManager.activeCharacter);
+
+    if (!sourcePrompt || !Array.isArray(promptOrder)) {
+        toastr.warning(t`没有找到要复制的预设条目。`);
+        return false;
+    }
+
+    const sourceOrderIndex = promptOrder.findIndex(entry => entry?.identifier === promptId);
+
+    if (sourceOrderIndex < 0) {
+        toastr.warning(t`这个预设条目不在当前列表中。`);
+        return false;
+    }
+
+    const copyId = createUniquePresetPromptIdentifier();
+    const sourcePromptIndex = promptManager.serviceSettings.prompts.findIndex(prompt => prompt?.identifier === promptId);
+    const promptCopy = structuredClone(sourcePrompt);
+    const sourceOrderEntry = promptOrder[sourceOrderIndex] ?? {};
+    const orderCopy = {
+        ...structuredClone(sourceOrderEntry),
+        identifier: copyId,
+        enabled: sourceOrderEntry.enabled !== false,
+    };
+
+    promptCopy.identifier = copyId;
+    promptCopy.name = createPresetPromptCopyName(sourcePrompt.name);
+
+    if (sourcePromptIndex >= 0) {
+        promptManager.serviceSettings.prompts.splice(sourcePromptIndex + 1, 0, promptCopy);
+    } else {
+        promptManager.serviceSettings.prompts.push(promptCopy);
+    }
+
+    promptOrder.splice(sourceOrderIndex + 1, 0, orderCopy);
+    copyPresetPromptGroupAssignment(promptId, copyId);
+
+    const counts = promptManager.tokenHandler?.getCounts?.();
+
+    if (counts) {
+        counts[copyId] = null;
+    }
+
+    promptManager.log?.(`Copied prompt: ${promptId} -> ${copyId}.`);
+    refreshPresetPromptListAfterCopy();
+
+    try {
+        await Promise.resolve(promptManager.saveServiceSettings?.());
+        saveOpenAiPresetAfterPromptEdit();
+        toastr.success(t`已复制预设条目。`);
+        refreshPromptManagerTokensDebounced();
+        return true;
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to save copied preset prompt`, error);
+        toastr.error(t`复制预设条目后保存失败。`);
+        return false;
+    }
+}
+
+function createUniquePresetPromptIdentifier() {
+    let identifier = uuidv4();
+
+    while (promptManager?.getPromptById?.(identifier)) {
+        identifier = uuidv4();
+    }
+
+    return identifier;
+}
+
+function createPresetPromptCopyName(name) {
+    const sourceName = String(name || t`未命名条目`);
+    const baseName = `${sourceName} 副本`;
+    const existingNames = new Set(
+        (promptManager?.serviceSettings?.prompts ?? [])
+            .map(prompt => prompt?.name)
+            .filter(name => typeof name === 'string'),
+    );
+
+    if (!existingNames.has(baseName)) {
+        return baseName;
+    }
+
+    for (let index = 2; index < 1000; index++) {
+        const candidate = `${baseName} ${index}`;
+
+        if (!existingNames.has(candidate)) {
+            return candidate;
+        }
+    }
+
+    return `${baseName} ${Date.now()}`;
+}
+
+function copyPresetPromptGroupAssignment(sourcePromptId, copiedPromptId) {
+    if (!isPresetGroupingEnabled()) {
+        return false;
+    }
+
+    const groupState = getPresetPromptGroupState();
+    const groupId = groupState.prompts?.[sourcePromptId]?.groupId;
+
+    if (!groupId) {
+        return false;
+    }
+
+    groupState.prompts[copiedPromptId] = { groupId };
+    normalizePresetPromptGroupState(groupState, new Set(getCurrentPresetPromptOrderIds()));
+    savePresetPromptGroupSettings();
+    return true;
+}
+
+function refreshPresetPromptListAfterCopy() {
+    if (isPresetVuePromptListManagerActive()) {
+        syncPresetVuePromptListManagerState();
+        preparePromptManagerCustomDragList(getPromptManagerListElement());
+        return;
+    }
+
+    if (settings.presetSwitchOptimizationEnabled && isPromptManagerReadyForFastPresetSwitch()) {
+        void renderPromptManagerListWithoutTokenStats();
+        return;
+    }
+
+    promptManager?.render?.();
+}
+
 async function handleOpenAiPresetChangedBefore(event) {
     extensionState.openAiPresetSwitchEarlyRendered = false;
+
+    try {
+        await flushPendingPresetPromptChanges();
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to save preset prompt changes before preset switch`, error);
+        toastr.error(t`Failed to save preset prompt changes. See console for details.`);
+    }
+    resetPresetPromptGroupRuntimeState();
 
     if (!settings.presetSwitchOptimizationEnabled || !isPromptManagerReadyForFastPresetSwitch()) {
         return;
@@ -1531,6 +5493,9 @@ async function handleOpenAiPresetChangedBefore(event) {
 
 async function handleOpenAiPresetChangedAfter() {
     if (!settings.presetSwitchOptimizationEnabled || !isPromptManagerReadyForFastPresetSwitch()) {
+        if (isPresetGroupingEnabled()) {
+            syncPresetVuePromptListManagerState();
+        }
         return;
     }
 
@@ -1541,6 +5506,9 @@ async function handleOpenAiPresetChangedAfter() {
         }
 
         suppressPromptManagerDebouncedRender();
+        if (isPresetGroupingEnabled()) {
+            syncPresetVuePromptListManagerState();
+        }
         refreshPromptManagerTokensAfterPresetSwitchDebounced();
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to fast-render prompt manager after preset switch`, error);
@@ -1569,6 +5537,10 @@ function applyPromptManagerPresetFieldsEarly(preset) {
         oai_settings.prompt_order = structuredClone(preset.prompt_order);
     }
 
+    oai_settings.extensions = preset.extensions && typeof preset.extensions === 'object'
+        ? structuredClone(preset.extensions)
+        : {};
+
     promptManager.serviceSettings = oai_settings;
     promptManager.sanitizeServiceSettings?.();
 }
@@ -1588,6 +5560,15 @@ async function renderPromptManagerListWithoutTokenStats() {
 }
 
 async function renderPromptManagerListItemsFast() {
+    if (isPresetGroupingEnabled()) {
+        await installPresetVuePromptListManager();
+
+        if (syncPresetVuePromptListManagerState()) {
+            preparePromptManagerCustomDragList(getPromptManagerListElement());
+            return;
+        }
+    }
+
     const promptManagerList = promptManager.listElement;
 
     if (!promptManager.serviceSettings?.prompts || !promptManagerList) {
@@ -1631,15 +5612,12 @@ async function renderPromptManagerListItemsFast() {
         const canToggle = prompt.marker && !FORCE_TOGGLE_PROMPTS.has(prompt.identifier)
             ? false
             : !toggleDisabled.has(prompt.identifier);
-        const detachSpanHtml = canDelete
-            ? '<span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs"></span>'
-            : '<span class="fa-solid"></span>';
-        const editSpanHtml = canEdit
-            ? '<span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs"></span>'
-            : '<span class="fa-solid"></span>';
-        const toggleSpanHtml = canToggle
-            ? `<span class="prompt-manager-toggle-action ${listEntry?.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}"></span>`
-            : '<span class="fa-solid"></span>';
+        const controlsHtml = renderPresetPromptControlsHtml({
+            canDelete,
+            canEdit,
+            canToggle,
+            isEnabled: listEntry?.enabled !== false,
+        });
 
         listItemHtml += renderPromptManagerListRow({
             prefix,
@@ -1648,9 +5626,7 @@ async function renderPromptManagerListItemsFast() {
             draggableClass,
             markerClass,
             importantClass: getPromptImportantClass(prompt, prefix),
-            detachSpanHtml,
-            editSpanHtml,
-            toggleSpanHtml,
+            controlsHtml,
             warningClass,
             warningTitle,
             calculatedTokens,
@@ -1668,9 +5644,7 @@ function renderPromptManagerListRow({
     draggableClass,
     markerClass,
     importantClass,
-    detachSpanHtml,
-    editSpanHtml,
-    toggleSpanHtml,
+    controlsHtml,
     warningClass,
     warningTitle,
     calculatedTokens,
@@ -1707,9 +5681,7 @@ function renderPromptManagerListRow({
             </span>
             <span>
                 <span class="prompt_manager_prompt_controls">
-                    ${detachSpanHtml}
-                    ${editSpanHtml}
-                    ${toggleSpanHtml}
+                    ${controlsHtml}
                 </span>
             </span>
             <span class="prompt_manager_prompt_tokens" data-pm-tokens="${calculatedTokens}"><span class="${warningClass}" title="${warningTitle}"> </span>${calculatedTokens}</span>
@@ -1866,6 +5838,7 @@ function handlePresetPromptToggleClick(event) {
     }
 
     updatePromptToggleRow(row, toggle, promptOrderEntry.enabled);
+    updatePresetVuePromptItemEnabled(promptId, promptOrderEntry.enabled);
     updatePromptTokenCell(row, null);
     void Promise.resolve(promptManager.saveServiceSettings?.()).catch(error => {
         console.debug(`${LOG_PREFIX} Failed to save prompt toggle state`, error);
@@ -2076,7 +6049,7 @@ async function refreshPromptManagerTokens() {
         return;
     }
 
-    if (extensionState.promptManagerCustomDragState) {
+    if (extensionState.promptManagerCustomDragState || isPresetVuePromptListDragging()) {
         extensionState.promptManagerTokenRefreshPendingAfterDrag = true;
         return;
     }
@@ -2100,6 +6073,30 @@ async function refreshPromptManagerTokens() {
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to refresh prompt manager token counts`, error);
     }
+}
+
+function handlePresetVuePromptRangeSelectionDelegatedClick(event, target) {
+    const manager = getPresetVuePromptListManagerState();
+    const model = manager.state;
+
+    if (!model?.rangeSelection?.active) {
+        return false;
+    }
+
+    const row = target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt[data-pm-identifier]`);
+
+    if (!(row instanceof HTMLElement)) {
+        return false;
+    }
+
+    const item = getPresetVuePromptItemsFromModel(model).find(item => item?.id === row.dataset.pmIdentifier);
+
+    if (!item) {
+        return false;
+    }
+
+    handlePresetVuePromptRangeSelectionClick(model, item, event);
+    return true;
 }
 
 async function refreshPromptManagerTokensWithBaibaokuBulkCount() {
@@ -2751,7 +6748,7 @@ function installPresetPromptCodeMirrorEditorGlobalListeners(state) {
         if (
             target.closest(PRESET_PROMPT_MANAGER_RESET_SELECTOR)
             || target.closest(PRESET_PROMPT_MANAGER_CLOSE_SELECTOR)
-            || target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-edit-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-inspect-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-detach-action`)
+            || target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} [data-preset-prompt-action], ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-edit-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-inspect-action, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .prompt-manager-detach-action`)
             || target.closest('#completion_prompt_manager .completion_prompt_manager_footer .menu_button')
         ) {
             schedulePresetPromptCodeMirrorEditorRefresh(state, { forceFromSource: true });
@@ -3311,6 +7308,7 @@ function removePresetPromptCodeMirrorEditorStyle() {
 
 export {
     applyPresetDragOptimization,
+    applyPresetGrouping,
     applyPresetPromptCodeMirrorEditorOptimization,
     applyPresetSaveOptimization,
     applyPresetScrollOptimization,
