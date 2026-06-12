@@ -3510,11 +3510,12 @@ function renderPresetVuePromptControls(h, prompt, item) {
             },
         }),
         h('span', { class: 'bai-bai-preset-prompt-actions' }, [
-            canEdit
+            canDelete
                 ? renderPresetVuePromptActionButton(h, {
-                    action: 'edit',
-                    icon: 'fa-pencil',
-                    text: t`编辑`,
+                    action: 'delete',
+                    icon: 'fa-trash',
+                    text: t`删除`,
+                    caution: true,
                     onClick: event => handlePresetPromptActionButtonClick(event),
                 })
                 : null,
@@ -3524,12 +3525,11 @@ function renderPresetVuePromptControls(h, prompt, item) {
                 text: t`复制`,
                 onClick: event => handlePresetPromptActionButtonClick(event),
             }),
-            canDelete
+            canEdit
                 ? renderPresetVuePromptActionButton(h, {
-                    action: 'delete',
-                    icon: 'fa-trash',
-                    text: t`删除`,
-                    caution: true,
+                    action: 'edit',
+                    icon: 'fa-pencil',
+                    text: t`编辑`,
                     onClick: event => handlePresetPromptActionButtonClick(event),
                 })
                 : null,
@@ -3567,6 +3567,14 @@ function renderPresetPromptControlsHtml({ canDelete, canEdit, canToggle, isEnabl
     const toggleSpanHtml = canToggle
         ? `<span title="${escapeHtml(isEnabled ? t`关闭条目` : t`开启条目`)}" class="menu_button bai-bai-preset-prompt-icon-button prompt-manager-toggle-action fa-solid ${isEnabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></span>`
         : '';
+    const deleteItemHtml = canDelete
+        ? renderPresetPromptActionButtonHtml({
+            action: 'delete',
+            icon: 'fa-trash',
+            text: t`删除`,
+            caution: true,
+        })
+        : '';
     const editItemHtml = canEdit
         ? renderPresetPromptActionButtonHtml({
             action: 'edit',
@@ -3579,21 +3587,13 @@ function renderPresetPromptControlsHtml({ canDelete, canEdit, canToggle, isEnabl
         icon: 'fa-copy',
         text: t`复制`,
     });
-    const deleteItemHtml = canDelete
-        ? renderPresetPromptActionButtonHtml({
-            action: 'delete',
-            icon: 'fa-trash',
-            text: t`删除`,
-            caution: true,
-        })
-        : '';
 
     return `
         <span title="${escapeHtml(t`更多操作`)}" class="menu_button bai-bai-preset-prompt-icon-button bai-bai-preset-prompt-actions-hint fa-solid fa-ellipsis"></span>
         <span class="bai-bai-preset-prompt-actions">
-            ${editItemHtml}
-            ${copyItemHtml}
             ${deleteItemHtml}
+            ${copyItemHtml}
+            ${editItemHtml}
         </span>
         ${toggleSpanHtml}
     `;
@@ -5242,7 +5242,7 @@ function handlePresetListActionClick(event) {
     handlePresetPromptActionButtonClick(event, action);
 }
 
-function handlePresetPromptActionButtonClick(event, action = null) {
+async function handlePresetPromptActionButtonClick(event, action = null) {
     action ||= event?.currentTarget instanceof Element ? event.currentTarget : null;
 
     if (!(action instanceof Element)) {
@@ -5258,6 +5258,19 @@ function handlePresetPromptActionButtonClick(event, action = null) {
         closePresetPromptActionMenus();
         void copyPresetPromptEntryFromAction(action);
         return;
+    }
+
+    if (presetAction === 'delete') {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        closePresetPromptActionMenus();
+
+        const confirmed = await callGenericPopup(t`要从当前预设列表中移除这个条目吗？`, POPUP_TYPE.CONFIRM);
+
+        if (!confirmed) {
+            return;
+        }
     }
 
     const handler = presetAction === 'delete' || action.classList.contains('prompt-manager-detach-action')
