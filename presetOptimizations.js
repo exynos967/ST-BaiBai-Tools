@@ -26,6 +26,7 @@ const PRESET_DELETE_HANDLER_KEY = '__baiBaiToolkitPresetDeleteHandler';
 const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
 const PRESET_TOGGLE_HANDLER_KEY = '__baiBaiToolkitPresetToggleHandler';
 const PRESET_SAVE_HANDLER_KEY = '__baiBaiToolkitPresetSaveHandler';
+const PRESET_EXPORT_PENDING_CHANGES_HANDLER_KEY = '__baiBaiToolkitPresetExportPendingChangesHandler';
 const PRESET_VUE_LIST_MANAGER_KEY = '__baiBaiToolkitPresetVueListManager';
 const PRESET_VUE_LIST_RENDER_PATCH_KEY = '__baiBaiToolkitPresetVueListRenderPatch';
 const PRESET_VUE_TOUCH_SCROLL_GUARD_KEY = '__baiBaiToolkitPresetVueTouchScrollGuard';
@@ -49,7 +50,6 @@ const PRESET_VUE_COLLAPSE_ANIMATION_MS = 260;
 const PRESET_VUE_DRAG_ANIMATION_MS = 180;
 const PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX = 40;
 const PRESET_VUE_GROUP_DROP_TARGET_MIN_HEIGHT_PX = 44;
-const PRESET_VUE_ORDER_SAVE_DELAY_MS = PRESET_VUE_DRAG_ANIMATION_MS + 40;
 const PRESET_PENDING_CHANGES_VISIBILITY_CHECK_DELAY_MS = 120;
 const PRESET_PENDING_CHANGES_VISIBILITY_FALLBACK_DELAY_MS = 1000;
 const PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE = 1001;
@@ -64,6 +64,7 @@ const PRESET_DRAG_CLICK_SUPPRESS_MS = 500;
 const OPENAI_PRESET_SELECT_SELECTOR = '#settings_preset_openai';
 const OPENAI_PRESET_DELETE_SELECTOR = '#delete_oai_preset';
 const OPENAI_PRESET_UPDATE_SELECTOR = '#update_oai_preset';
+const OPENAI_PRESET_EXPORT_SELECTOR = '#export_oai_preset';
 const PRESET_PROMPT_MANAGER_LIST_SELECTOR = '#completion_prompt_manager_list';
 const PRESET_VUE_GROUP_DROP_SURFACE_SELECTOR = `${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body-inner, ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list`;
 const PRESET_PROMPT_MANAGER_SAVE_SELECTOR = '#completion_prompt_manager_popup_entry_form_save';
@@ -308,6 +309,8 @@ function applyPresetDragOptimization() {
 }
 
 function applyPresetGrouping() {
+    installPresetExportPendingChangesGuard();
+
     if (!isPresetGroupingEnabled()) {
         flushPendingPresetPromptChangesSafely();
         removePresetVuePromptListManager();
@@ -325,6 +328,65 @@ function applyPresetGrouping() {
     patchPromptManagerDraggable();
     applyPresetDragOptimizationCss();
     void installPresetVuePromptListManager();
+}
+
+function installPresetExportPendingChangesGuard() {
+    if (extensionState[PRESET_EXPORT_PENDING_CHANGES_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = event => {
+        const target = event.target instanceof Element
+            ? event.target.closest(OPENAI_PRESET_EXPORT_SELECTOR)
+            : null;
+
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        if (extensionState.presetExportPendingChangesBypass) {
+            extensionState.presetExportPendingChangesBypass = false;
+            return;
+        }
+
+        if (!hasPendingPresetPromptChanges()) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        void confirmSavePendingPresetChangesBeforeExport(target);
+    };
+
+    extensionState[PRESET_EXPORT_PENDING_CHANGES_HANDLER_KEY] = handler;
+    document.addEventListener('click', handler, true);
+}
+
+async function confirmSavePendingPresetChangesBeforeExport(exportButton) {
+    if (extensionState.presetExportPendingChangesPromptOpen) {
+        return;
+    }
+
+    extensionState.presetExportPendingChangesPromptOpen = true;
+
+    try {
+        const confirmed = await callGenericPopup(t`当前预设有未保存的更改。要先保存后再导出吗？`, POPUP_TYPE.CONFIRM);
+
+        if (!confirmed) {
+            return;
+        }
+
+        await flushPendingPresetPromptChanges();
+
+        extensionState.presetExportPendingChangesBypass = true;
+        exportButton.click();
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to save pending preset changes before export`, error);
+        toastr.error(t`Failed to save preset changes before export. See console for details.`);
+    } finally {
+        extensionState.presetExportPendingChangesPromptOpen = false;
+    }
 }
 
 function isPresetGroupingEnabled() {
@@ -627,21 +689,6 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     list-style: none;
     min-height: 0;
     overflow: hidden;
-}
-
-body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
-    min-height: ${PRESET_VUE_GROUP_DROP_TARGET_MIN_HEIGHT_PX}px;
-}
-
-body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list::after {
-    content: "";
-    display: block;
-    flex-basis: ${PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX}px;
-    min-height: ${PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX}px;
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    pointer-events: none;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list-empty {
@@ -1254,6 +1301,7 @@ function getPresetVuePromptListManagerState() {
             syncTimer: null,
             saveTimer: null,
             saveFrame: null,
+            pendingOrderSave: false,
             dragSnapshot: null,
             pendingServiceSettingsSave: false,
             pendingGroupSettingsSave: false,
@@ -1950,7 +1998,59 @@ function getPresetVuePromptNestedGroupDropTargetFromMoveEvent(event, originalEve
     return getPresetVuePromptGroupDropTargetAtPoint(getPresetDragPoint(originalEvent ?? event?.originalEvent));
 }
 
+function getPresetVuePromptExpandedGroupDropTargetAtPoint(point) {
+    if (!point) {
+        return null;
+    }
+
+    const candidates = [];
+    const margin = PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX;
+
+    for (const group of document.querySelectorAll(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group:not(.bai-bai-preset-group-collapsed)`)) {
+        if (!(group instanceof HTMLElement)) {
+            continue;
+        }
+
+        const surface = group.querySelector('.bai-bai-preset-group-list, .bai-bai-preset-group-body');
+
+        if (!(surface instanceof HTMLElement)) {
+            continue;
+        }
+
+        const rect = surface.getBoundingClientRect();
+        const left = rect.left - margin;
+        const right = rect.right + margin;
+        const top = rect.top - margin / 2;
+        const bottom = rect.bottom + margin;
+
+        if (point.clientX < left || point.clientX > right || point.clientY < top || point.clientY > bottom) {
+            continue;
+        }
+
+        const verticalDistance = point.clientY < rect.top
+            ? rect.top - point.clientY
+            : point.clientY > rect.bottom
+                ? point.clientY - rect.bottom
+                : 0;
+
+        candidates.push({ group, verticalDistance });
+    }
+
+    candidates.sort((left, right) => left.verticalDistance - right.verticalDistance);
+    return candidates[0]?.group ?? null;
+}
+
 function getPresetVuePromptGroupDropTargetAtPoint(point) {
+    const strictTarget = getPresetVuePromptStrictGroupDropTargetAtPoint(point);
+
+    if (strictTarget) {
+        return strictTarget;
+    }
+
+    return getPresetVuePromptExpandedGroupDropTargetAtPoint(point);
+}
+
+function getPresetVuePromptStrictGroupDropTargetAtPoint(point) {
     if (!point) {
         return null;
     }
@@ -3974,21 +4074,7 @@ function renderPresetPromptActionButtonHtml({ action, icon, text, caution = fals
 function schedulePresetVuePromptOrderSaveAfterDrop() {
     const manager = getPresetVuePromptListManagerState();
     clearPresetVuePromptOrderSaveSchedule(manager);
-
-    const scheduleCommit = () => {
-        manager.saveFrame = null;
-        manager.saveTimer = setTimeout(() => {
-            manager.saveTimer = null;
-            savePresetVuePromptOrderFromModelSafely();
-        }, PRESET_VUE_ORDER_SAVE_DELAY_MS);
-    };
-
-    if (typeof requestAnimationFrame === 'function') {
-        manager.saveFrame = requestAnimationFrame(scheduleCommit);
-    } else {
-        scheduleCommit();
-    }
-
+    manager.pendingOrderSave = true;
     markPresetPromptChangesSavePending();
 }
 
@@ -4003,6 +4089,7 @@ function clearPresetVuePromptOrderSaveSchedule(manager = getPresetVuePromptListM
 
     manager.saveFrame = null;
     manager.saveTimer = null;
+    manager.pendingOrderSave = false;
 }
 
 async function flushScheduledPresetVuePromptOrderSave() {
@@ -4013,12 +4100,17 @@ async function flushScheduledPresetVuePromptOrderSave() {
     }
 
     clearPresetVuePromptOrderSaveSchedule(manager);
-    await savePresetVuePromptOrderFromModel();
-    return true;
+    try {
+        await savePresetVuePromptOrderFromModel();
+        return true;
+    } catch (error) {
+        manager.pendingOrderSave = true;
+        throw error;
+    }
 }
 
 function hasScheduledPresetVuePromptOrderSave(manager = getPresetVuePromptListManagerState()) {
-    return manager.saveFrame !== null || manager.saveTimer !== null;
+    return Boolean(manager.pendingOrderSave || manager.saveFrame !== null || manager.saveTimer !== null);
 }
 
 function getPendingPresetPromptServiceSaves(manager = getPresetVuePromptListManagerState()) {
@@ -4378,14 +4470,6 @@ async function flushPendingPresetPromptGroupSave(entry) {
     }
 }
 
-function savePresetVuePromptOrderFromModelSafely() {
-    void savePresetVuePromptOrderFromModel().catch(error => {
-        console.debug(`${LOG_PREFIX} Failed to save preset prompt order`, error);
-        toastr.error(t`Failed to save preset prompt order. See console for details.`);
-        syncPresetVuePromptListManagerState();
-    });
-}
-
 async function savePresetVuePromptOrderFromModel() {
     if (!isPromptManagerReadyForCustomDrag()) {
         return;
@@ -4404,7 +4488,6 @@ async function savePresetVuePromptOrderFromModel() {
 
     if (areStringArraysEqual(beforeOrder, afterOrder)) {
         savePresetVuePromptGroupAssignments(nextAssignments);
-        syncPresetVuePromptListManagerState();
         return;
     }
 
@@ -4419,7 +4502,6 @@ async function savePresetVuePromptOrderFromModel() {
     savePresetVuePromptGroupAssignments(nextAssignments, { persist: false });
     markPresetPromptServiceSettingsSavePending();
     savePresetPromptGroupSettings();
-    syncPresetVuePromptListManagerState();
 }
 
 function getPresetVuePromptGroupAssignmentsFromModel(model) {
