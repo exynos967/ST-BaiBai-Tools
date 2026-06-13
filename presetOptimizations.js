@@ -31,6 +31,7 @@ const PRESET_VUE_LIST_MANAGER_KEY = '__baiBaiToolkitPresetVueListManager';
 const PRESET_VUE_LIST_RENDER_PATCH_KEY = '__baiBaiToolkitPresetVueListRenderPatch';
 const PRESET_VUE_TOUCH_SCROLL_GUARD_KEY = '__baiBaiToolkitPresetVueTouchScrollGuard';
 const PRESET_VUE_DRAG_PLACEMENT_LISTENER_KEY = '__baiBaiToolkitPresetVueDragPlacementListener';
+const PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY = '__baiBaiToolkitPresetVueDynamicDragDelayHandler';
 const PRESET_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY = '__baiBaiToolkitPresetPendingChangesLifecycleHandler';
 const PRESET_VUE_LIST_HOST_CLASS = 'bai-bai-preset-vue-list-host';
 const PRESET_VUE_DRAGGING_BODY_CLASS = 'bai-bai-preset-vue-dragging';
@@ -1180,6 +1181,7 @@ async function installPresetVuePromptListManager() {
     installPresetVuePromptListRenderPatch();
     patchPromptManagerDraggable();
     applyPresetDragOptimizationCss();
+    installPresetVueDynamicDragDelayHandlers();
 
     if (manager.installing) {
         return manager.installing;
@@ -1254,6 +1256,7 @@ function removePresetVuePromptListManager({ skipRestore = false } = {}) {
     document.body?.classList.remove(PRESET_VUE_DRAGGING_BODY_CLASS);
 
     removePresetVuePromptListRenderPatch();
+    removePresetVueDynamicDragDelayHandlers();
 
     unmountPresetVuePromptListApp(manager);
 
@@ -3401,6 +3404,75 @@ function renderPresetVuePromptGroupBody(h, vueDraggableNext, item, draggableProp
             }),
         ]),
     ]);
+}
+
+function installPresetVueDynamicDragDelayHandlers() {
+    if (extensionState[PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY]) {
+        return;
+    }
+
+    const handler = event => configurePresetVueSortableDragDelayForEvent(event);
+
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('touchstart', handler, true);
+    extensionState[PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY] = { handler };
+}
+
+function removePresetVueDynamicDragDelayHandlers() {
+    const state = extensionState[PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY];
+
+    if (!state?.handler) {
+        return;
+    }
+
+    document.removeEventListener('pointerdown', state.handler, true);
+    document.removeEventListener('touchstart', state.handler, true);
+    delete extensionState[PRESET_VUE_DYNAMIC_DRAG_DELAY_HANDLER_KEY];
+}
+
+function configurePresetVueSortableDragDelayForEvent(event) {
+    if (!isMobile()) {
+        return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+
+    if (!target) {
+        return;
+    }
+
+    const list = target.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR}, .bai-bai-preset-group-list`);
+
+    if (!(list instanceof HTMLElement)) {
+        return;
+    }
+
+    const sortable = getPresetVueSortableInstance(list);
+
+    if (!sortable || typeof sortable.option !== 'function') {
+        return;
+    }
+
+    const immediateHandle = Boolean(target.closest('.drag-handle'));
+    const threshold = immediateHandle
+        ? PRESET_VUE_POINTER_START_THRESHOLD_PX
+        : PRESET_VUE_TOUCH_START_THRESHOLD_PX;
+
+    sortable.option('delay', immediateHandle ? 0 : PRESET_VUE_TOUCH_DRAG_DELAY_MS);
+    sortable.option('touchStartThreshold', threshold);
+    sortable.option('fallbackTolerance', threshold);
+}
+
+function getPresetVueSortableInstance(element) {
+    for (const key of Object.keys(element)) {
+        const value = element[key];
+
+        if (key.startsWith('Sortable') && value && typeof value.option === 'function') {
+            return value;
+        }
+    }
+
+    return null;
 }
 
 function applyPresetVueDragGestureOptions(draggableProps) {
