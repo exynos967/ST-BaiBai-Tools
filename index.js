@@ -154,9 +154,16 @@ const CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY = '__baiBaiToolkitCharacterListAvatarL
 const CHARACTER_LIST_AVATAR_LAZY_LOAD_STYLE_ID = 'bai_bai_toolkit_character_list_avatar_lazy_load_style';
 const REGEX_UNGROUPED_GROUP_ID = '__ungrouped';
 const REGEX_PENDING_ASSIGNMENT_GROUP_ID = '__pending_assignment';
-const REGEX_VUE_GROUP_BODY_TRANSITION_KEY = '__baiBaiToolkitRegexVueGroupBodyTransition';
 const REGEX_VUE_DROP_TARGET_CLASS = 'bai-bai-regex-drop-target';
-const REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS = 180;
+const REGEX_VUE_DRAG_INDICATOR_CLASS = 'bai-bai-regex-drag-indicator';
+const REGEX_VUE_DRAGGING_BODY_CLASS = 'bai-bai-regex-vue-dragging';
+const REGEX_VUE_GROUP_EXPAND_ANIMATION_MS = 180;
+const REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS = 260;
+const REGEX_VUE_POINTER_START_THRESHOLD_PX = 4;
+const REGEX_VUE_TOUCH_START_THRESHOLD_PX = 10;
+const REGEX_VUE_EMPTY_INSERT_THRESHOLD_PX = 40;
+const REGEX_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX = 6;
+const REGEX_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS = 350;
 const DESCRIPTION_EDITOR_SOURCE_SELECTOR = '#description_textarea';
 const DESCRIPTION_EDITOR_SOURCE_HIDDEN_CLASS = 'bai-bai-toolkit-description-source-hidden';
 const DESCRIPTION_CODEMIRROR_EDITOR_ID = 'bai_bai_description_codemirror_editor';
@@ -5054,6 +5061,8 @@ function removeRegexVueManager() {
 
     clearTimeout(manager.syncTimer);
     manager.syncTimer = null;
+    clearRegexVueScriptManualDragState(manager);
+    manager.groupHeaderGesture = null;
     setRegexVueDragCursorActive(false);
 
     if (manager.app) {
@@ -5088,6 +5097,20 @@ function getRegexVueManagerState() {
             installing: null,
             syncTimer: null,
             suppressObserver: false,
+            dragging: false,
+            draggedScript: null,
+            dragPlacement: null,
+            dragLayoutCache: null,
+            dragPlacementFrame: null,
+            dragAutoScrollFrame: null,
+            dragIndicatorElement: null,
+            dragIndicatorRectKey: null,
+            dragScrollContainer: null,
+            lastDragPoint: null,
+            lastDragEndedAt: 0,
+            groupHeaderGesture: null,
+            lastGroupHeaderToggleAt: 0,
+            lastGroupHeaderGestureCanceledAt: 0,
         };
     }
 
@@ -5337,27 +5360,27 @@ function buildRegexVueListModel(scriptType) {
 }
 
 function createRegexVueManagerRootComponent(vue, vueDraggableNext, model) {
-    const { h, Teleport, Transition, Fragment } = vue;
+    const { h, Teleport, Fragment } = vue;
 
     return {
         name: 'BaiBaiRegexManagerRoot',
         render() {
             return h(Fragment, null, [
-                renderRegexVueTeleport(h, vueDraggableNext, Teleport, Transition, model, 'global', '#saved_regex_scripts'),
-                renderRegexVueTeleport(h, vueDraggableNext, Teleport, Transition, model, 'preset', '#saved_preset_scripts'),
-                renderRegexVueTeleport(h, vueDraggableNext, Teleport, Transition, model, 'scoped', '#saved_scoped_scripts'),
+                renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, 'global', '#saved_regex_scripts'),
+                renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, 'preset', '#saved_preset_scripts'),
+                renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, 'scoped', '#saved_scoped_scripts'),
             ]);
         },
     };
 }
 
-function renderRegexVueTeleport(h, vueDraggableNext, Teleport, Transition, model, typeKey, selector) {
+function renderRegexVueTeleport(h, vueDraggableNext, Teleport, model, typeKey, selector) {
     return h(Teleport, { to: selector }, [
-        renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey),
+        renderRegexVueList(h, vueDraggableNext, model, typeKey),
     ]);
 }
 
-function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
+function renderRegexVueList(h, vueDraggableNext, model, typeKey) {
     const list = model.lists[typeKey];
     const scriptCount = list.groups.reduce((count, group) => count + group.scripts.length, 0);
     const children = [
@@ -5376,12 +5399,13 @@ function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
             groupChildren.push(renderRegexVueGroupHeader(h, list, group));
         }
 
-        groupChildren.push(renderRegexVueGroupBodyTransition(h, vueDraggableNext, Transition, model, list, group));
+        groupChildren.push(renderRegexVueGroupBody(h, vueDraggableNext, model, list, group));
 
         return h('div', {
             class: [
                 'bai-bai-regex-group',
                 showGroupHeader ? 'bai-bai-regex-group-framed' : '',
+                group.collapsed ? 'bai-bai-regex-group-collapsed' : '',
                 group.isUngrouped ? 'bai-bai-regex-group-ungrouped' : '',
                 group.isPendingAssignment ? 'bai-bai-regex-group-pending-assignment' : '',
             ],
@@ -5402,33 +5426,12 @@ function renderRegexVueList(h, vueDraggableNext, Transition, model, typeKey) {
     }, children);
 }
 
-function renderRegexVueGroupBodyTransition(h, vueDraggableNext, Transition, model, list, group) {
-    return h(Transition, {
-        name: 'bai-bai-regex-group-collapse',
-        css: false,
-        key: `transition-${group.id}`,
-        onBeforeEnter: prepareRegexVueGroupBodyEnter,
-        onEnter: animateRegexVueGroupBodyEnter,
-        onAfterEnter: cleanupRegexVueGroupBodyTransition,
-        onEnterCancelled: cleanupRegexVueGroupBodyTransition,
-        onBeforeLeave: prepareRegexVueGroupBodyLeave,
-        onLeave: animateRegexVueGroupBodyLeave,
-        onAfterLeave: cleanupRegexVueGroupBodyTransition,
-        onLeaveCancelled: cleanupRegexVueGroupBodyTransition,
-    }, {
-        default: () => group.collapsed
-            ? null
-            : renderRegexVueGroupBody(h, vueDraggableNext, model, list, group),
-    });
-}
-
 function renderRegexVueGroupBody(h, vueDraggableNext, model, list, group) {
     const rowRender = () => group.scripts.map(script => renderRegexVueScriptRow(h, model, list, script));
-
-    return h(vueDraggableNext.VueDraggableNext, {
+    const draggableProps = {
         class: [
-            'bai-bai-regex-group-body flex-container flexFlowColumn',
-            group.scripts.length === 0 ? 'bai-bai-regex-group-body-empty' : '',
+            'bai-bai-regex-group-list flex-container flexFlowColumn',
+            group.scripts.length === 0 ? 'bai-bai-regex-group-list-empty' : '',
         ],
         'data-regex-type': list.typeKey,
         'data-regex-group-id': group.id,
@@ -5437,8 +5440,9 @@ function renderRegexVueGroupBody(h, vueDraggableNext, model, list, group) {
         draggable: '.regex-script-label',
         handle: '.bai-bai-regex-script-drag-handle',
         itemKey: 'id',
+        sort: false,
         animation: 0,
-        emptyInsertThreshold: 40,
+        emptyInsertThreshold: REGEX_VUE_EMPTY_INSERT_THRESHOLD_PX,
         forceFallback: true,
         fallbackOnBody: true,
         fallbackClass: 'bai-bai-regex-sortable-fallback',
@@ -5446,15 +5450,40 @@ function renderRegexVueGroupBody(h, vueDraggableNext, model, list, group) {
         chosenClass: 'bai-bai-regex-sortable-chosen',
         dragClass: 'bai-bai-regex-sortable-drag',
         move: event => handleRegexVueScriptDragMove(event, list.typeKey),
-        key: `body-${group.id}`,
+        key: `list-${group.id}`,
         onChoose: () => setRegexVueDragCursorActive(true),
-        onStart: () => setRegexVueDragCursorActive(true),
-        onUnchoose: () => setRegexVueDragCursorActive(false),
-        onEnd: () => {
-            setRegexVueDragCursorActive(false);
-            saveRegexScriptsOrderFromModelSafely(list.typeKey);
+        onStart: event => beginRegexVueScriptManualDrag(model, event, list.typeKey),
+        onUnchoose: () => {
+            if (!getRegexVueManagerState().dragging) {
+                setRegexVueDragCursorActive(false);
+            }
         },
-    }, { default: rowRender });
+        onEnd: event => {
+            const changed = finishRegexVueScriptManualDrag(model, event, list.typeKey);
+            setRegexVueDragCursorActive(false);
+
+            if (changed) {
+                saveRegexScriptsOrderFromModelSafely(list.typeKey);
+            }
+        },
+    };
+
+    applyRegexVueDragGestureOptions(draggableProps);
+
+    return h('div', {
+        class: [
+            'bai-bai-regex-group-body flex-container flexFlowColumn',
+            group.scripts.length === 0 ? 'bai-bai-regex-group-body-empty' : '',
+        ],
+        'data-regex-type': list.typeKey,
+        'data-regex-group-id': group.id,
+        key: `body-${group.id}`,
+        'aria-hidden': group.collapsed ? 'true' : 'false',
+    }, [
+        h('div', { class: 'bai-bai-regex-group-body-inner' }, [
+            h(vueDraggableNext.VueDraggableNext, draggableProps, { default: rowRender }),
+        ]),
+    ]);
 }
 
 function renderRegexVueListToolbar(h, model, list) {
@@ -5508,17 +5537,20 @@ function renderRegexVueGroupHeader(h, list, group) {
     return h('div', {
         class: ['bai-bai-regex-group-header', 'flex-container', 'flexnowrap', group.collapsed ? 'collapsed' : ''],
         key: `header-${group.id}`,
-        onClick: (event) => {
-            // Prevent collapsing when clicking on buttons inside the header
-            if (event.target.closest('.menu_button, .checkbox, input, label')) {
-                return;
-            }
-            toggleRegexVueGroupCollapsed(list.scriptType, group.id);
-        }
+        onPointerdown: event => beginRegexVueGroupHeaderGesture(event, list.scriptType, group.id),
+        onPointermoveCapture: event => moveRegexVueGroupHeaderGesture(event, list.scriptType, group.id),
+        onPointerup: event => finishRegexVueGroupHeaderGesture(event, list.scriptType, group.id),
+        onPointercancel: () => cancelRegexVueGroupHeaderGesture(list.scriptType, group.id),
+        onClick: event => handleRegexVueGroupHeaderClickFallback(event, list.scriptType, group.id),
     }, [
         h('span', {
             class: ['bai-bai-regex-group-toggle fa-solid fa-chevron-down'],
             title: group.collapsed ? t`Expand` : t`Collapse`,
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                toggleRegexVueGroupCollapsed(list.scriptType, group.id);
+            },
         }),
         h('div', { class: 'bai-bai-regex-group-title flex-container flex1 overflow-hidden' }, [
             h('strong', { class: 'bai-bai-regex-group-name overflow-hidden', title: group.name }, group.name),
@@ -5584,6 +5616,148 @@ function renderRegexVueGroupHeader(h, list, group) {
             onClick: () => void deleteRegexVueGroup(list.scriptType, group.id),
         }),
     ].filter(Boolean));
+}
+
+function beginRegexVueGroupHeaderGesture(event, scriptType, groupId) {
+    if (isRegexVueGroupHeaderInteractiveEvent(event)) {
+        return;
+    }
+
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+        return;
+    }
+
+    if (event.isPrimary === false) {
+        return;
+    }
+
+    const point = getRegexVuePointerEventPoint(event);
+
+    if (!point) {
+        return;
+    }
+
+    const manager = getRegexVueManagerState();
+    manager.groupHeaderGesture = {
+        scriptType,
+        groupId,
+        pointerId: event.pointerId,
+        x: point.clientX,
+        y: point.clientY,
+        canceled: false,
+    };
+}
+
+function moveRegexVueGroupHeaderGesture(event, scriptType, groupId) {
+    const manager = getRegexVueManagerState();
+    const gesture = manager.groupHeaderGesture;
+
+    if (!gesture || gesture.scriptType !== scriptType || gesture.groupId !== groupId || gesture.pointerId !== event.pointerId) {
+        return;
+    }
+
+    const point = getRegexVuePointerEventPoint(event);
+
+    if (!point) {
+        return;
+    }
+
+    if (getRegexVuePointDistance(gesture, point) > REGEX_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX) {
+        gesture.canceled = true;
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+    }
+}
+
+function finishRegexVueGroupHeaderGesture(event, scriptType, groupId) {
+    const manager = getRegexVueManagerState();
+    const gesture = manager.groupHeaderGesture;
+
+    if (!gesture || gesture.scriptType !== scriptType || gesture.groupId !== groupId || gesture.pointerId !== event.pointerId) {
+        return;
+    }
+
+    manager.groupHeaderGesture = null;
+
+    if (isRegexVueGroupHeaderInteractiveEvent(event) || shouldSuppressRegexVueGroupHeaderToggle(manager)) {
+        return;
+    }
+
+    const point = getRegexVuePointerEventPoint(event);
+
+    if (!point || gesture.canceled || getRegexVuePointDistance(gesture, point) > REGEX_VUE_GROUP_HEADER_TOGGLE_DISTANCE_PX) {
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+        return;
+    }
+
+    if (event.cancelable) {
+        event.preventDefault();
+    }
+
+    event.stopPropagation();
+    manager.lastGroupHeaderToggleAt = Date.now();
+    toggleRegexVueGroupCollapsed(scriptType, groupId);
+}
+
+function cancelRegexVueGroupHeaderGesture(scriptType, groupId) {
+    const manager = getRegexVueManagerState();
+
+    if (manager.groupHeaderGesture?.scriptType === scriptType && manager.groupHeaderGesture?.groupId === groupId) {
+        manager.groupHeaderGesture = null;
+        manager.lastGroupHeaderGestureCanceledAt = Date.now();
+    }
+}
+
+function handleRegexVueGroupHeaderClickFallback(event, scriptType, groupId) {
+    const manager = getRegexVueManagerState();
+
+    if (isRegexVueGroupHeaderInteractiveEvent(event)) {
+        return;
+    }
+
+    const now = Date.now();
+
+    if (
+        now - (manager.lastGroupHeaderToggleAt || 0) < REGEX_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS
+        || now - (manager.lastGroupHeaderGestureCanceledAt || 0) < REGEX_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS
+        || shouldSuppressRegexVueGroupHeaderToggle(manager)
+    ) {
+        if (event.cancelable) {
+            event.preventDefault();
+        }
+
+        event.stopPropagation();
+        return;
+    }
+
+    manager.lastGroupHeaderToggleAt = now;
+    toggleRegexVueGroupCollapsed(scriptType, groupId);
+}
+
+function shouldSuppressRegexVueGroupHeaderToggle(manager = getRegexVueManagerState()) {
+    return Boolean(
+        manager.dragging
+        || Date.now() - (manager.lastDragEndedAt || 0) < REGEX_VUE_GROUP_HEADER_DRAG_SUPPRESS_MS,
+    );
+}
+
+function isRegexVueGroupHeaderInteractiveEvent(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    return Boolean(target?.closest('.bai-bai-regex-group-toggle, .menu_button, .checkbox, input, label, button, select, textarea, a, [contenteditable="true"]'));
+}
+
+function getRegexVuePointerEventPoint(event) {
+    if (typeof event?.clientX !== 'number' || typeof event?.clientY !== 'number') {
+        return null;
+    }
+
+    return {
+        clientX: event.clientX,
+        clientY: event.clientY,
+    };
+}
+
+function getRegexVuePointDistance(start, end) {
+    return Math.hypot(end.clientX - start.x, end.clientY - start.y);
 }
 
 function renderRegexVueScriptRow(h, model, list, script) {
@@ -5685,7 +5859,7 @@ function isRegexVueScriptDragMoveAllowed(event, typeKey) {
         return false;
     }
 
-    if (!to.matches('.bai-bai-regex-group-body') || !from.matches('.bai-bai-regex-group-body')) {
+    if (!to.matches('.bai-bai-regex-group-list') || !from.matches('.bai-bai-regex-group-list')) {
         return false;
     }
 
@@ -5700,141 +5874,607 @@ function handleRegexVueScriptDragMove(event, typeKey) {
     const allowed = isRegexVueScriptDragMoveAllowed(event, typeKey);
 
     if (allowed) {
-        setRegexVueDropTargetFromList(event?.to);
-    } else {
-        clearRegexVueDropTarget();
+        updateRegexVueScriptManualDragPlacementFromEvent(event?.originalEvent ?? event);
     }
 
-    return allowed;
+    return false;
 }
 
-function prepareRegexVueGroupBodyEnter(element) {
-    if (!(element instanceof HTMLElement)) {
-        return;
-    }
-
-    stopRegexVueGroupBodyTransition(element);
-    element.style.height = '0px';
-    element.style.opacity = '0';
-    element.style.overflow = 'hidden';
-    element.style.willChange = 'height, opacity';
-
-    // 强制重绘以确保初始状态被应用
-    void element.offsetHeight;
-}
-
-function animateRegexVueGroupBodyEnter(element, done) {
-    if (!(element instanceof HTMLElement)) {
-        done();
-        return;
-    }
-
-    const targetHeight = element.scrollHeight;
-    const transition = startRegexVueGroupBodyTransition(element, done);
-    if (!transition) {
-        return;
-    }
-
-    transition.raf = requestAnimationFrame(() => {
-        element.style.height = `${targetHeight}px`;
-        element.style.opacity = '1';
+function applyRegexVueDragGestureOptions(draggableProps) {
+    Object.assign(draggableProps, {
+        touchStartThreshold: isMobile() ? REGEX_VUE_TOUCH_START_THRESHOLD_PX : REGEX_VUE_POINTER_START_THRESHOLD_PX,
+        fallbackTolerance: isMobile() ? REGEX_VUE_TOUCH_START_THRESHOLD_PX : REGEX_VUE_POINTER_START_THRESHOLD_PX,
     });
 }
 
-function prepareRegexVueGroupBodyLeave(element) {
-    if (!(element instanceof HTMLElement)) {
+function beginRegexVueScriptManualDrag(model, event, typeKey) {
+    const manager = getRegexVueManagerState();
+    const list = model?.lists?.[typeKey];
+    const draggedScript = getRegexVueScriptDragItemFromEvent(event, typeKey);
+
+    manager.groupHeaderGesture = null;
+    clearRegexVueScriptManualDragState(manager);
+
+    if (!list || !draggedScript) {
+        setRegexVueDragCursorActive(true);
         return;
     }
 
-    stopRegexVueGroupBodyTransition(element);
-    element.style.height = `${element.scrollHeight}px`;
-    element.style.opacity = '1';
-    element.style.overflow = 'hidden';
-    element.style.willChange = 'height, opacity';
-
-    // 强制重绘以确保初始状态被应用
-    void element.offsetHeight;
+    setRegexVueScriptManualDragging(true, manager);
+    manager.draggedScript = draggedScript;
+    manager.dragLayoutCache = createRegexVueScriptManualDragLayoutCache(list, draggedScript);
+    manager.dragScrollContainer = getRegexVueDragScrollContainer(getRegexVueListElement(typeKey));
+    manager.lastDragStartedAt = Date.now();
+    setRegexVueDragCursorActive(true);
+    startRegexVueScriptManualDragPlacementListeners(manager);
+    updateRegexVueScriptManualDragPlacementFromEvent(event?.originalEvent ?? event);
 }
 
-function animateRegexVueGroupBodyLeave(element, done) {
-    if (!(element instanceof HTMLElement)) {
-        done();
-        return;
+function finishRegexVueScriptManualDrag(model, event = null, typeKey = null) {
+    const manager = getRegexVueManagerState();
+    const dragTypeKey = typeKey || manager.draggedScript?.typeKey;
+    const list = dragTypeKey ? model?.lists?.[dragTypeKey] : null;
+    const point = getRegexVueDragPoint(event?.originalEvent ?? event);
+
+    if (point) {
+        manager.lastDragPoint = point;
+        updateRegexVueScriptManualDragPlacement(list, point);
     }
 
-    const transition = startRegexVueGroupBodyTransition(element, done);
-    if (!transition) {
-        return;
-    }
-
-    transition.raf = requestAnimationFrame(() => {
-        element.style.height = '0px';
-        element.style.opacity = '0';
-    });
+    const changed = applyRegexVueScriptManualDrop(list, manager.dragPlacement);
+    setRegexVueScriptManualDragging(false, manager);
+    manager.lastDragEndedAt = Date.now();
+    clearRegexVueScriptManualDragState(manager);
+    return changed;
 }
 
-function startRegexVueGroupBodyTransition(element, done) {
-    stopRegexVueGroupBodyTransition(element);
+function getRegexVueScriptDragItemFromEvent(event, typeKey) {
+    const item = event?.item;
+    const contextElement = event?.draggedContext?.element;
+    const from = event?.from;
+    const scriptId = item instanceof HTMLElement
+        ? item.dataset.regexScriptId
+        : contextElement?.id;
+    const sourceGroupId = from instanceof HTMLElement
+        ? from.dataset.regexGroupId
+        : item instanceof HTMLElement
+            ? item.closest('.bai-bai-regex-group-list')?.dataset.regexGroupId
+            : null;
 
-    if (shouldSkipRegexVueGroupBodyTransition()) {
-        done();
+    if (!scriptId || !sourceGroupId) {
         return null;
     }
 
-    let finished = false;
-    const finish = () => {
-        if (finished) {
+    return {
+        typeKey,
+        scriptId,
+        sourceGroupId,
+    };
+}
+
+function startRegexVueScriptManualDragPlacementListeners(manager = getRegexVueManagerState()) {
+    stopRegexVueScriptManualDragPlacementListeners(manager);
+
+    const pointermove = event => updateRegexVueScriptManualDragPlacementFromEvent(event);
+    const mousemove = event => {
+        if (manager.draggedScript) {
+            updateRegexVueScriptManualDragPlacementFromEvent(event);
+        }
+    };
+    const touchmove = event => updateRegexVueScriptManualDragPlacementFromEvent(event);
+
+    document.addEventListener('pointermove', pointermove, true);
+    document.addEventListener('mousemove', mousemove, true);
+    document.addEventListener('touchmove', touchmove, { capture: true, passive: true });
+    manager.dragPlacementListeners = { pointermove, mousemove, touchmove };
+}
+
+function stopRegexVueScriptManualDragPlacementListeners(manager = getRegexVueManagerState()) {
+    const listeners = manager.dragPlacementListeners;
+
+    if (!listeners) {
+        return;
+    }
+
+    document.removeEventListener('pointermove', listeners.pointermove, true);
+    document.removeEventListener('mousemove', listeners.mousemove, true);
+    document.removeEventListener('touchmove', listeners.touchmove, true);
+    manager.dragPlacementListeners = null;
+}
+
+function updateRegexVueScriptManualDragPlacementFromEvent(event) {
+    const point = getRegexVueDragPoint(event);
+    const manager = getRegexVueManagerState();
+
+    if (!point) {
+        return false;
+    }
+
+    manager.lastDragPoint = point;
+    scheduleRegexVueScriptManualDragPlacementFrame(manager);
+    return true;
+}
+
+function scheduleRegexVueScriptManualDragPlacementFrame(manager = getRegexVueManagerState()) {
+    if (manager.dragPlacementFrame) {
+        return;
+    }
+
+    manager.dragPlacementFrame = requestAnimationFrame(() => {
+        manager.dragPlacementFrame = null;
+        const typeKey = manager.draggedScript?.typeKey;
+        const list = typeKey ? manager.state?.lists?.[typeKey] : null;
+        updateRegexVueScriptManualDragPlacement(list, manager.lastDragPoint);
+        scheduleRegexVueScriptManualDragAutoScroll(manager);
+    });
+}
+
+function updateRegexVueScriptManualDragPlacement(list, point) {
+    const manager = getRegexVueManagerState();
+    const draggedScript = manager.draggedScript;
+
+    if (!list || !point || !draggedScript) {
+        clearRegexVueScriptManualDragPlacement(manager);
+        return false;
+    }
+
+    const placement = getRegexVueScriptManualDragPlacementAtPoint(list, draggedScript, point);
+
+    if (!placement) {
+        clearRegexVueScriptManualDragPlacement(manager);
+        return false;
+    }
+
+    manager.dragPlacement = placement;
+    setRegexVueDropTargetFromList(placement.groupElement);
+    updateRegexVueScriptManualDragIndicator(manager, placement);
+    return true;
+}
+
+function getRegexVueScriptManualDragPlacementAtPoint(list, draggedScript, point) {
+    const layout = getRegexVueScriptManualDragLayoutCache(list, draggedScript);
+    const groupLayout = getRegexVueScriptManualGroupLayoutAtPoint(layout, point);
+
+    if (!groupLayout) {
+        return null;
+    }
+
+    const index = getRegexVueScriptManualDropIndexFromLayout(groupLayout, point);
+
+    return {
+        targetType: 'group',
+        typeKey: list.typeKey,
+        groupId: groupLayout.groupId,
+        groupElement: groupLayout.groupElement,
+        containerElement: groupLayout.containerElement,
+        containerRect: groupLayout.containerRect,
+        children: groupLayout.children,
+        index,
+        indicatorRect: getRegexVueScriptManualIndicatorRectFromLayout(groupLayout, index),
+        draggedScript,
+    };
+}
+
+function getRegexVueScriptManualDragLayoutCache(list, draggedScript) {
+    const manager = getRegexVueManagerState();
+    const cache = manager.dragLayoutCache;
+
+    if (
+        cache
+        && cache.draggedScript?.typeKey === draggedScript?.typeKey
+        && cache.draggedScript?.scriptId === draggedScript?.scriptId
+        && getRegexVueScriptManualDragLayoutScrollSignature(cache) === cache.scrollSignature
+    ) {
+        return cache;
+    }
+
+    manager.dragLayoutCache = createRegexVueScriptManualDragLayoutCache(list, draggedScript);
+    return manager.dragLayoutCache;
+}
+
+function createRegexVueScriptManualDragLayoutCache(list, draggedScript) {
+    const listElement = getRegexVueListElement(list?.typeKey);
+
+    if (!list || !draggedScript || !(listElement instanceof HTMLElement)) {
+        return null;
+    }
+
+    const groups = [];
+
+    for (const groupElement of listElement.querySelectorAll('.bai-bai-regex-group:not(.bai-bai-regex-group-collapsed)')) {
+        if (!(groupElement instanceof HTMLElement)) {
+            continue;
+        }
+
+        const groupId = groupElement.dataset.regexGroupId;
+        const containerElement = groupElement.querySelector('.bai-bai-regex-group-list');
+
+        if (!groupId || !(containerElement instanceof HTMLElement)) {
+            continue;
+        }
+
+        groups.push({
+            groupId,
+            groupElement,
+            hitRect: getRegexVueElementRect(groupElement),
+            ...createRegexVueScriptManualContainerLayout(containerElement, draggedScript),
+        });
+    }
+
+    const cache = {
+        draggedScript: { ...draggedScript },
+        groups,
+        scrollSignature: '',
+    };
+
+    cache.scrollSignature = getRegexVueScriptManualDragLayoutScrollSignature(cache);
+    return cache;
+}
+
+function createRegexVueScriptManualContainerLayout(containerElement, draggedScript) {
+    return {
+        containerElement,
+        containerRect: getRegexVueElementRect(containerElement),
+        children: getRegexVueScriptManualDropChildren(containerElement, draggedScript)
+            .map(element => ({
+                element,
+                rect: getRegexVueElementRect(element),
+            })),
+    };
+}
+
+function getRegexVueElementRect(element) {
+    const rect = element.getBoundingClientRect();
+
+    return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+    };
+}
+
+function getRegexVueScriptManualDragLayoutScrollSignature(cache) {
+    const parts = [window.scrollX || 0, window.scrollY || 0];
+    const seen = new Set();
+
+    for (const group of cache?.groups ?? []) {
+        const element = group.containerElement;
+
+        if (!(element instanceof HTMLElement) || seen.has(element)) {
+            continue;
+        }
+
+        seen.add(element);
+        parts.push(element.scrollLeft || 0, element.scrollTop || 0);
+    }
+
+    return parts.join(':');
+}
+
+function getRegexVueScriptManualGroupLayoutAtPoint(layout, point) {
+    if (!layout || !point) {
+        return null;
+    }
+
+    const margin = REGEX_VUE_EMPTY_INSERT_THRESHOLD_PX;
+    let bestGroup = null;
+    let bestDistance = Infinity;
+
+    for (const group of layout.groups ?? []) {
+        const rect = group.hitRect;
+
+        if (
+            point.clientX < rect.left - margin
+            || point.clientX > rect.right + margin
+            || point.clientY < rect.top - margin / 2
+            || point.clientY > rect.bottom + margin
+        ) {
+            continue;
+        }
+
+        const verticalDistance = point.clientY < rect.top
+            ? rect.top - point.clientY
+            : point.clientY > rect.bottom
+                ? point.clientY - rect.bottom
+                : 0;
+
+        if (verticalDistance < bestDistance) {
+            bestDistance = verticalDistance;
+            bestGroup = group;
+        }
+    }
+
+    return bestGroup;
+}
+
+function getRegexVueScriptManualDropIndexFromLayout(containerLayout, point) {
+    const children = containerLayout?.children ?? [];
+    let index = 0;
+
+    for (const child of children) {
+        const rect = child.rect;
+
+        if (point.clientY < rect.top + rect.height / 2) {
+            return Math.max(0, Math.min(index, children.length));
+        }
+
+        index += 1;
+    }
+
+    return children.length;
+}
+
+function getRegexVueScriptManualIndicatorRectFromLayout(containerLayout, index) {
+    const containerRect = containerLayout?.containerRect;
+
+    if (!containerRect) {
+        return null;
+    }
+
+    const children = containerLayout.children ?? [];
+    const target = children[index];
+    let top = containerRect.top;
+
+    if (target) {
+        top = target.rect.top;
+    } else if (children.length) {
+        top = children[children.length - 1].rect.bottom;
+    }
+
+    return {
+        left: containerRect.left,
+        top,
+        width: containerRect.width,
+    };
+}
+
+function getRegexVueScriptManualDropChildren(containerElement, draggedScript) {
+    return Array.from(containerElement?.children ?? []).filter(child => child instanceof HTMLElement
+        && !isRegexVueTransientDragElement(child)
+        && !isRegexVueDraggedDomElement(child, draggedScript));
+}
+
+function isRegexVueTransientDragElement(element) {
+    return element.classList.contains('bai-bai-regex-sortable-fallback')
+        || element.classList.contains('bai-bai-regex-sortable-ghost')
+        || element.classList.contains('bai-bai-regex-sortable-chosen')
+        || element.classList.contains('bai-bai-regex-sortable-drag');
+}
+
+function isRegexVueDraggedDomElement(element, draggedScript) {
+    return Boolean(
+        element instanceof HTMLElement
+        && draggedScript?.scriptId
+        && element.dataset.regexScriptId === draggedScript.scriptId,
+    );
+}
+
+function updateRegexVueScriptManualDragIndicator(manager, placement) {
+    const indicator = ensureRegexVueScriptManualDragIndicator(manager);
+    const rect = placement?.indicatorRect;
+
+    if (!indicator || !rect) {
+        clearRegexVueScriptManualDragIndicator(manager);
+        return;
+    }
+
+    const rectKey = `${Math.round(rect.left)}:${Math.round(rect.top)}:${Math.round(rect.width)}`;
+
+    if (manager.dragIndicatorRectKey === rectKey) {
+        return;
+    }
+
+    manager.dragIndicatorRectKey = rectKey;
+    indicator.style.left = `${rect.left}px`;
+    indicator.style.top = `${Math.round(rect.top - 1)}px`;
+    indicator.style.width = `${rect.width}px`;
+}
+
+function ensureRegexVueScriptManualDragIndicator(manager = getRegexVueManagerState()) {
+    if (manager.dragIndicatorElement instanceof HTMLElement && manager.dragIndicatorElement.isConnected) {
+        return manager.dragIndicatorElement;
+    }
+
+    const indicator = document.createElement('div');
+    indicator.className = REGEX_VUE_DRAG_INDICATOR_CLASS;
+    document.body.append(indicator);
+    manager.dragIndicatorElement = indicator;
+    return indicator;
+}
+
+function clearRegexVueScriptManualDragIndicator(manager = getRegexVueManagerState()) {
+    manager.dragIndicatorElement?.remove?.();
+    manager.dragIndicatorElement = null;
+    manager.dragIndicatorRectKey = null;
+}
+
+function clearRegexVueScriptManualDragPlacement(manager = getRegexVueManagerState()) {
+    manager.dragPlacement = null;
+    clearRegexVueDropTarget();
+    clearRegexVueScriptManualDragIndicator(manager);
+}
+
+function clearRegexVueScriptManualDragState(manager = getRegexVueManagerState()) {
+    stopRegexVueScriptManualDragPlacementListeners(manager);
+
+    if (manager.dragPlacementFrame) {
+        cancelAnimationFrame(manager.dragPlacementFrame);
+        manager.dragPlacementFrame = null;
+    }
+
+    if (manager.dragAutoScrollFrame) {
+        cancelAnimationFrame(manager.dragAutoScrollFrame);
+        manager.dragAutoScrollFrame = null;
+    }
+
+    clearRegexVueScriptManualDragPlacement(manager);
+    setRegexVueScriptManualDragging(false, manager);
+    manager.draggedScript = null;
+    manager.dragLayoutCache = null;
+    manager.dragScrollContainer = null;
+    manager.lastDragPoint = null;
+}
+
+function applyRegexVueScriptManualDrop(list, placement) {
+    const draggedScript = placement?.draggedScript;
+    const targetGroupId = placement?.groupId;
+
+    if (!list || !draggedScript?.scriptId || !targetGroupId) {
+        return false;
+    }
+
+    const targetGroup = list.groups.find(group => group.id === targetGroupId);
+
+    if (!targetGroup) {
+        return false;
+    }
+
+    const before = getRegexVueListSnapshot(list);
+    const script = removeRegexVueScriptFromListModel(list, draggedScript.scriptId);
+
+    if (!script) {
+        return false;
+    }
+
+    targetGroup.scripts = Array.isArray(targetGroup.scripts) ? targetGroup.scripts : [];
+    targetGroup.scripts.splice(Math.max(0, Math.min(Number(placement.index) || 0, targetGroup.scripts.length)), 0, script);
+    return !areStringArraysEqual(before, getRegexVueListSnapshot(list));
+}
+
+function removeRegexVueScriptFromListModel(list, scriptId) {
+    for (const group of list?.groups ?? []) {
+        const scripts = Array.isArray(group.scripts) ? group.scripts : [];
+        const index = scripts.findIndex(script => script?.id === scriptId);
+
+        if (index >= 0) {
+            return scripts.splice(index, 1)[0];
+        }
+    }
+
+    return null;
+}
+
+function getRegexVueListSnapshot(list) {
+    return (list?.groups ?? []).flatMap(group => (group.scripts ?? []).map(script => `${group.id}:${script?.id ?? ''}`));
+}
+
+function areStringArraysEqual(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+        return false;
+    }
+
+    return left.every((value, index) => value === right[index]);
+}
+
+function scheduleRegexVueScriptManualDragAutoScroll(manager = getRegexVueManagerState()) {
+    if (manager.dragAutoScrollFrame || !manager.draggedScript || !manager.lastDragPoint) {
+        return;
+    }
+
+    manager.dragAutoScrollFrame = requestAnimationFrame(() => {
+        manager.dragAutoScrollFrame = null;
+
+        if (!manager.draggedScript || !manager.lastDragPoint) {
             return;
         }
 
-        finished = true;
-        stopRegexVueGroupBodyTransition(element);
-        done();
-    };
+        const scrolled = autoScrollRegexVueScriptManualDragContainer(manager);
 
-    const onTransitionEnd = event => {
-        if (event.target === element && (event.propertyName === 'height' || event.propertyName === 'opacity')) {
-            finish();
+        if (!scrolled) {
+            return;
         }
-    };
 
-    const transition = { timer: setTimeout(finish, REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS + 80), onTransitionEnd, raf: 0 };
-    element[REGEX_VUE_GROUP_BODY_TRANSITION_KEY] = transition;
-    element.addEventListener('transitionend', onTransitionEnd);
-    element.style.transition = `height ${REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS}ms ease, opacity ${REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS}ms ease`;
-    return transition;
+        manager.dragLayoutCache = null;
+        scheduleRegexVueScriptManualDragPlacementFrame(manager);
+        scheduleRegexVueScriptManualDragAutoScroll(manager);
+    });
 }
 
-function stopRegexVueGroupBodyTransition(element) {
-    const transition = element?.[REGEX_VUE_GROUP_BODY_TRANSITION_KEY];
+function autoScrollRegexVueScriptManualDragContainer(manager = getRegexVueManagerState()) {
+    const container = manager.dragScrollContainer;
+    const point = manager.lastDragPoint;
 
-    if (!transition) {
-        return;
+    if (!container || !point) {
+        return false;
     }
 
-    clearTimeout(transition.timer);
-    if (transition.raf) {
-        cancelAnimationFrame(transition.raf);
+    const rect = container === document.scrollingElement || container === document.documentElement || container === document.body
+        ? { top: 0, bottom: window.innerHeight || document.documentElement.clientHeight || 0 }
+        : container.getBoundingClientRect();
+    const edge = 56;
+    const maxStep = 18;
+    let delta = 0;
+
+    if (point.clientY < rect.top + edge) {
+        delta = -Math.ceil(maxStep * (1 - Math.max(0, point.clientY - rect.top) / edge));
+    } else if (point.clientY > rect.bottom - edge) {
+        delta = Math.ceil(maxStep * (1 - Math.max(0, rect.bottom - point.clientY) / edge));
     }
-    element.removeEventListener('transitionend', transition.onTransitionEnd);
-    delete element[REGEX_VUE_GROUP_BODY_TRANSITION_KEY];
+
+    if (!delta) {
+        return false;
+    }
+
+    const before = container.scrollTop;
+    container.scrollTop += delta;
+    return container.scrollTop !== before;
 }
 
-function cleanupRegexVueGroupBodyTransition(element) {
-    if (!(element instanceof HTMLElement)) {
-        return;
+function getRegexVueDragScrollContainer(source) {
+    let current = source instanceof Element ? source.parentElement : null;
+
+    while (current && current !== document.body && current !== document.documentElement) {
+        const style = getComputedStyle(current);
+        const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY);
+
+        if (canScrollY && current.scrollHeight > current.clientHeight) {
+            return current;
+        }
+
+        current = current.parentElement;
     }
 
-    stopRegexVueGroupBodyTransition(element);
-    element.style.height = '';
-    element.style.opacity = '';
-    element.style.overflow = '';
-    element.style.transition = '';
-    element.style.willChange = '';
+    return document.scrollingElement || document.documentElement;
 }
 
-function shouldSkipRegexVueGroupBodyTransition() {
-    return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+function getRegexVueListElement(typeKey) {
+    if (!typeKey) {
+        return null;
+    }
+
+    return document.querySelector(`.bai-bai-regex-vue-list[data-regex-type="${typeKey}"]`);
+}
+
+function getRegexVueDragPoint(event) {
+    if (!event) {
+        return null;
+    }
+
+    if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+        return {
+            clientX: event.clientX,
+            clientY: event.clientY,
+        };
+    }
+
+    const touch = event.touches?.[0] ?? event.changedTouches?.[0];
+
+    if (touch && typeof touch.clientX === 'number' && typeof touch.clientY === 'number') {
+        return {
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+        };
+    }
+
+    return null;
+}
+
+function setRegexVueScriptManualDragging(active, manager = getRegexVueManagerState()) {
+    manager.dragging = Boolean(active);
+    document.body?.classList.toggle(REGEX_VUE_DRAGGING_BODY_CLASS, Boolean(active));
 }
 
 function setRegexVueDragCursorActive(active) {
@@ -5983,14 +6623,35 @@ function installRegexVueManagerStyle() {
 }
 
 .bai-bai-regex-group-framed .bai-bai-regex-group-body {
+    display: grid !important;
+    grid-template-rows: 1fr;
+    overflow: hidden;
+    opacity: 1;
     padding: 0;
-    min-height: 8px;
     border-bottom-left-radius: 10px;
     border-bottom-right-radius: 10px;
+    transition: grid-template-rows ${REGEX_VUE_GROUP_EXPAND_ANIMATION_MS}ms ease, opacity ${REGEX_VUE_GROUP_EXPAND_ANIMATION_MS}ms ease, background-color 0.15s ease;
+}
+
+.bai-bai-regex-group-collapsed .bai-bai-regex-group-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    pointer-events: none;
+    transition-duration: ${REGEX_VUE_GROUP_COLLAPSE_ANIMATION_MS}ms;
+}
+
+.bai-bai-regex-group-body-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.bai-bai-regex-group-list {
+    gap: 0;
+    min-height: 8px;
     transition: min-height 0.15s ease, background-color 0.15s ease;
 }
 
-body.bai-bai-regex-drag-cursor-active .bai-bai-regex-group-framed .bai-bai-regex-group-body-empty {
+body.${REGEX_VUE_DRAGGING_BODY_CLASS} .bai-bai-regex-group-framed:not(.bai-bai-regex-group-collapsed) .bai-bai-regex-group-list-empty {
     min-height: 44px;
 }
 
@@ -6037,6 +6698,7 @@ body.bai-bai-regex-drag-cursor-active .bai-bai-regex-group-framed .bai-bai-regex
     border-bottom: 1px solid var(--SmartThemeBorderColor);
     cursor: pointer;
     user-select: none;
+    touch-action: manipulation;
 }
 
 .bai-bai-regex-group-header:hover {
@@ -6091,6 +6753,11 @@ body.bai-bai-regex-drag-cursor-active .bai-bai-regex-group-framed .bai-bai-regex
     opacity: 0.35;
 }
 
+body.${REGEX_VUE_DRAGGING_BODY_CLASS} #regex_container .bai-bai-regex-sortable-ghost,
+body.${REGEX_VUE_DRAGGING_BODY_CLASS} #regex_container .bai-bai-regex-sortable-chosen {
+    visibility: hidden !important;
+}
+
 .bai-bai-regex-sortable-chosen {
     cursor: grabbing !important;
 }
@@ -6105,6 +6772,16 @@ body.bai-bai-regex-drag-cursor-active .bai-bai-regex-group-framed .bai-bai-regex
     cursor: grabbing !important;
 }
 
+.${REGEX_VUE_DRAG_INDICATOR_CLASS} {
+    position: fixed;
+    height: 2px;
+    border-radius: 999px;
+    pointer-events: none;
+    z-index: 50001;
+    background: var(--SmartThemeQuoteColor);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 10px var(--SmartThemeQuoteColor);
+}
+
 body.bai-bai-regex-drag-cursor-active #regex_container,
 body.bai-bai-regex-drag-cursor-active #regex_container *,
 body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-ghost,
@@ -6112,6 +6789,15 @@ body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-chosen,
 body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-drag,
 body.bai-bai-regex-drag-cursor-active .bai-bai-regex-sortable-fallback {
     cursor: grabbing !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bai-bai-regex-group-framed,
+    .bai-bai-regex-group-framed .bai-bai-regex-group-body,
+    .bai-bai-regex-group-list,
+    .bai-bai-regex-group-toggle {
+        transition: none !important;
+    }
 }
 `;
     document.head.append(style);
