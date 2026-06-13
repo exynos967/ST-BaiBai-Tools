@@ -47,6 +47,10 @@ const BAIBAOKU_THEME_LOADING_HOST_CLASS = 'bai-bai-toolkit-theme-loading-host';
 const BAIBAOKU_THEME_LOADING_OVERLAY_CLASS = 'bai-bai-toolkit-theme-loading-overlay';
 const BAIBAOKU_THEME_LOADING_FIXED_CLASS = 'bai-bai-toolkit-theme-loading-overlay-fixed';
 const BAIBAOKU_THEME_LOADING_SPINNER_CLASS = 'bai-bai-toolkit-theme-loading-spinner';
+const THEME_MANAGER_PANEL_SELECTOR = '#theme-manager-panel';
+const THEME_MANAGER_BACKGROUND_BINDINGS_KEY = 'themeManager_backgroundBindings';
+const THEME_MANAGER_THEME_ITEM_SELECTOR = `${THEME_MANAGER_PANEL_SELECTOR} .theme-item[data-value]`;
+const THEME_MANAGER_BACKGROUND_SELECTOR = '#bg_menu_content .bg_example, #bg_custom_content .bg_example';
 const BAIBAOKU_SAVE_GENERATE_URL = '/api/plugins/baibaoku/v1/chats/save-generate';
 const BAIBAOKU_STATUS_TIMEOUT_MS = 3000;
 const BAIBAOKU_PANEL_STATUS_CACHE_MS = 5 * 60_000;
@@ -826,6 +830,63 @@ function scheduleCustomCssCodeMirrorThemeSync() {
     }
 }
 
+function getThemeManagerBackgroundBindings() {
+    try {
+        const raw = localStorage.getItem(THEME_MANAGER_BACKGROUND_BINDINGS_KEY);
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to read Theme Manager background bindings`, error);
+        return null;
+    }
+}
+
+function syncThemeManagerActiveTheme(themeName) {
+    if (!themeName || !document.querySelector(THEME_MANAGER_PANEL_SELECTOR)) {
+        return false;
+    }
+
+    document.querySelectorAll(THEME_MANAGER_THEME_ITEM_SELECTOR).forEach((item) => {
+        if (item instanceof HTMLElement) {
+            item.classList.toggle('active', item.dataset.value === themeName);
+        }
+    });
+
+    return true;
+}
+
+function applyThemeManagerBoundBackground(themeName) {
+    const bindings = getThemeManagerBackgroundBindings();
+    const boundBackground = typeof bindings?.[themeName] === 'string' ? bindings[themeName] : '';
+    if (!boundBackground) {
+        return false;
+    }
+
+    const backgroundElement = Array.from(document.querySelectorAll(THEME_MANAGER_BACKGROUND_SELECTOR))
+        .find((element) => element instanceof HTMLElement && element.getAttribute('bgfile') === boundBackground);
+
+    if (!(backgroundElement instanceof HTMLElement)) {
+        console.debug(`${LOG_PREFIX} Theme Manager bound background was not found: ${boundBackground}`);
+        return false;
+    }
+
+    backgroundElement.click();
+    return true;
+}
+
+function syncThemeManagerAfterLazyThemeApply(themeName) {
+    if (!themeName || !document.querySelector(THEME_MANAGER_PANEL_SELECTOR)) {
+        return;
+    }
+
+    syncThemeManagerActiveTheme(themeName);
+    applyThemeManagerBoundBackground(themeName);
+}
+
 function applyBaibaokuThemeObject(theme, fallbackName) {
     const themeName = typeof theme?.name === 'string' && theme.name ? theme.name : fallbackName;
     if (!themeName) {
@@ -856,6 +917,7 @@ function applyBaibaokuThemeObject(theme, fallbackName) {
     }
     saveSettingsDebounced();
     scheduleCustomCssCodeMirrorThemeSync();
+    syncThemeManagerAfterLazyThemeApply(themeName);
     console.log(`${LOG_PREFIX} theme applied: ${themeName}`);
 }
 
