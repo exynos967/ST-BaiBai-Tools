@@ -23,7 +23,7 @@ import { accountStorage } from '../../../util/AccountStorage.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.25.17';
+const CURRENT_VERSION = '0.25.23';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -215,7 +215,7 @@ const LEFT_NAV_DRAWER_ICON_OPEN_CLASS = 'bai-bai-left-nav-icon-open';
 const LEFT_NAV_DRAWER_ICON_CLOSED_CLASS = 'bai-bai-left-nav-icon-closed';
 const LEFT_NAV_DRAWER_CLOSED_FALLBACK_TRANSFORM = 'translateX(calc(-1 * var(--bai-bai-left-nav-width) - 16px))';
 const LEFT_NAV_DRAWER_OPEN_TRANSFORM = 'translateX(0)';
-const LEFT_NAV_DRAWER_ANIMATION_DURATION_MS = 1;
+const LEFT_NAV_DRAWER_ANIMATION_DURATION_MS = 120;
 const LEFT_NAV_DRAWER_MAX_WIDTH_PX = 420;
 const LEFT_NAV_DRAWER_MOBILE_BREAKPOINT_PX = 1000;
 const LEFT_NAV_DRAWER_VIEWPORT_GAP_PX = 12;
@@ -9467,6 +9467,7 @@ function getLeftNavDrawerOptimizationState() {
             deferredStateTimer: null,
             transformAnimation: null,
             transformClosedTransform: '',
+            transformAnimationDirection: '',
         };
     }
 
@@ -9492,6 +9493,7 @@ function installLeftNavDrawerOptimization() {
         }
         state.transformAnimation = null;
         state.transformClosedTransform = '';
+        state.transformAnimationDirection = '';
     }
 
     const elements = getLeftNavDrawerElements();
@@ -9543,6 +9545,7 @@ function removeLeftNavDrawerOptimization() {
         }
         state.transformAnimation = null;
         state.transformClosedTransform = '';
+        state.transformAnimationDirection = '';
     }
 
     if (state.installed && state.clickHandler) {
@@ -9692,7 +9695,7 @@ function prepareLeftNavDrawerOptimizedState(elements) {
     elements.panel.removeAttribute('aria-hidden');
     elements.icon.removeAttribute('aria-expanded');
 
-    setLeftNavDrawerOptimizedOpen(nativeOpen, { persist: false });
+    setLeftNavDrawerOptimizedOpen(nativeOpen, { persist: false, animate: false });
 }
 
 function restoreLeftNavDrawerNativeState(elements) {
@@ -9786,7 +9789,7 @@ function closeOtherNativeDrawersBeforeLeftNavOpen({ icon, panel }) {
     });
 }
 
-function setLeftNavDrawerOptimizedOpen(open, { persist = true } = {}) {
+function setLeftNavDrawerOptimizedOpen(open, { persist = true, animate = true } = {}) {
     const elements = getLeftNavDrawerElements();
     if (!elements) {
         return;
@@ -9796,7 +9799,7 @@ function setLeftNavDrawerOptimizedOpen(open, { persist = true } = {}) {
     const state = getLeftNavDrawerOptimizationState();
     state.open = Boolean(open);
 
-    setLeftNavDrawerTransformState(panel, open);
+    setLeftNavDrawerTransformState(panel, open, { animate });
     scheduleLeftNavDrawerDeferredState(open, { persist });
 
     if (open && !CSS.supports('field-sizing', 'content')) {
@@ -9812,9 +9815,9 @@ function setLeftNavDrawerOptimizedOpen(open, { persist = true } = {}) {
     }
 }
 
-function setLeftNavDrawerTransformState(panel, open) {
-    const closedTransform = getLeftNavDrawerClosedTransform();
-    const animation = getLeftNavDrawerTransformAnimation(panel);
+function setLeftNavDrawerTransformState(panel, open, { animate = true } = {}) {
+    const closedTransform = getLeftNavDrawerOffscreenTransform();
+    const animation = getLeftNavDrawerTransformAnimation(panel, open);
 
     if (!animation) {
         panel.style.transform = open ? LEFT_NAV_DRAWER_OPEN_TRANSFORM : closedTransform;
@@ -9822,22 +9825,34 @@ function setLeftNavDrawerTransformState(panel, open) {
     }
 
     try {
-        animation.pause();
-        animation.currentTime = open ? LEFT_NAV_DRAWER_ANIMATION_DURATION_MS : 0;
+        if (!animate) {
+            animation.pause();
+            animation.currentTime = LEFT_NAV_DRAWER_ANIMATION_DURATION_MS;
+            return;
+        }
+
+        animation.currentTime = 0;
+        animation.playbackRate = 1;
+        void animation.play();
     } catch {
         panel.style.transform = open ? LEFT_NAV_DRAWER_OPEN_TRANSFORM : closedTransform;
     }
 }
 
-function getLeftNavDrawerTransformAnimation(panel) {
+function getLeftNavDrawerTransformAnimation(panel, open) {
     const state = getLeftNavDrawerOptimizationState();
-    const closedTransform = getLeftNavDrawerClosedTransform();
+    const closedTransform = getLeftNavDrawerOffscreenTransform();
+    const direction = open ? 'open' : 'close';
 
-    if (state.transformAnimation?.effect?.target === panel && state.transformClosedTransform === closedTransform) {
+    if (
+        state.transformAnimation?.effect?.target === panel
+        && state.transformClosedTransform === closedTransform
+        && state.transformAnimationDirection === direction
+    ) {
         return state.transformAnimation;
     }
 
-    if (state.transformAnimation) {
+    if (state.transformAnimation && state.transformClosedTransform !== closedTransform) {
         try {
             state.transformAnimation.cancel();
         } catch {
@@ -9845,20 +9860,43 @@ function getLeftNavDrawerTransformAnimation(panel) {
         }
         state.transformAnimation = null;
         state.transformClosedTransform = '';
+        state.transformAnimationDirection = '';
     }
 
     if (typeof panel.animate !== 'function') {
         return null;
     }
 
+    const keyframes = open
+        ? [{ transform: closedTransform }, { transform: LEFT_NAV_DRAWER_OPEN_TRANSFORM }]
+        : [{ transform: LEFT_NAV_DRAWER_OPEN_TRANSFORM }, { transform: closedTransform }];
+
+    if (state.transformAnimation?.effect?.target === panel) {
+        try {
+            state.transformAnimation.pause();
+            state.transformAnimation.effect.setKeyframes(keyframes);
+            state.transformAnimation.currentTime = 0;
+            state.transformAnimation.playbackRate = 1;
+            state.transformClosedTransform = closedTransform;
+            state.transformAnimationDirection = direction;
+            return state.transformAnimation;
+        } catch {
+            try {
+                state.transformAnimation.cancel();
+            } catch {
+                // Recreate the animation if keyframes cannot be updated in place.
+            }
+            state.transformAnimation = null;
+            state.transformClosedTransform = '';
+            state.transformAnimationDirection = '';
+        }
+    }
+
     let animation;
     try {
-        animation = panel.animate([
-            { transform: closedTransform },
-            { transform: LEFT_NAV_DRAWER_OPEN_TRANSFORM },
-        ], {
+        animation = panel.animate(keyframes, {
             duration: LEFT_NAV_DRAWER_ANIMATION_DURATION_MS,
-            easing: 'linear',
+            easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
             fill: 'both',
         });
     } catch {
@@ -9868,10 +9906,11 @@ function getLeftNavDrawerTransformAnimation(panel) {
     animation.pause();
     state.transformAnimation = animation;
     state.transformClosedTransform = closedTransform;
+    state.transformAnimationDirection = direction;
     return animation;
 }
 
-function getLeftNavDrawerClosedTransform() {
+function getLeftNavDrawerOffscreenTransform() {
     const viewportWidth = Math.max(0, window.innerWidth || document.documentElement.clientWidth || 0);
     const drawerWidth = Math.max(0, isLeftNavDrawerMobileLayout()
         ? viewportWidth
