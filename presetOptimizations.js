@@ -52,7 +52,9 @@ const PRESET_VUE_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
 const PRESET_VUE_DRAGGABLE_MODULE_PATH = './vendor/vue-draggable-next.esm-browser.prod.js';
 const PRESET_VUE_HEADER_ENTRY_ID = '__bai_bai_preset_header';
 const PRESET_VUE_SEPARATOR_ENTRY_ID = '__bai_bai_preset_separator';
+const PRESET_VUE_FAVORITES_ENTRY_ID = '__bai_bai_preset_favorites';
 const PRESET_GROUP_EXTENSION_PATH = 'baibaiToolkit.presetPromptGroups';
+const PRESET_FAVORITES_EXTENSION_PATH = 'baibaiToolkit.presetPromptFavorites';
 const PRESET_COMPAT_ENTRY_GROUPING_EXTENSION_PATH = 'entryGrouping';
 const PRESET_VUE_EXPAND_ANIMATION_MS = 180;
 const PRESET_VUE_COLLAPSE_ANIMATION_MS = 260;
@@ -2084,6 +2086,132 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     line-height: 1 !important;
 }
 
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 45%, transparent);
+    overflow: hidden;
+    transition: gap ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease, opacity ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-collapsed {
+    gap: 0;
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    padding: 10px 7px;
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 70%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 75%, transparent);
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-collapsed .bai-bai-preset-favorites-header {
+    border-bottom-color: transparent;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: normal;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-title strong {
+    overflow-wrap: anywhere;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-count {
+    opacity: 0.65;
+    white-space: nowrap;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-toggle {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex: 0 0 calc(var(--mainFontSize) * 1.65) !important;
+    inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    block-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-inline-size: calc(var(--mainFontSize) * 1.65) !important;
+    min-block-size: calc(var(--mainFontSize) * 1.65) !important;
+    box-sizing: border-box !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: calc(var(--mainFontSize) * 0.9) !important;
+    line-height: 1 !important;
+    transform: rotate(0deg);
+    transform-origin: center;
+    transition: transform ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-collapsed .bai-bai-preset-favorites-toggle {
+    transform: rotate(-90deg);
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-body {
+    display: grid;
+    grid-template-rows: 1fr;
+    min-height: 0;
+    overflow: hidden;
+    transition: grid-template-rows ${PRESET_VUE_EXPAND_ANIMATION_MS}ms ease;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-collapsed .bai-bai-preset-favorites-body {
+    grid-template-rows: 0fr;
+    pointer-events: none;
+    transition-duration: ${PRESET_VUE_COLLAPSE_ANIMATION_MS}ms;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-body-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(${PRESET_VUE_LIST_GAP_VARIABLE}, 6px);
+    margin: 0;
+    padding: var(${PRESET_VUE_LIST_GAP_VARIABLE}, 6px);
+    list-style: none;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorite-prompt .bai-bai-preset-favorite-row-marker {
+    cursor: default !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_READY_CLASS} .bai-bai-preset-favorite-prompt .bai-bai-preset-favorite-row-marker {
+    cursor: default !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-favorite-toggle-active {
+    color: #f5c542 !important;
+    opacity: 1 !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-favorite-toggle:not(.bai-bai-preset-prompt-favorite-toggle-active) {
+    opacity: 0.48;
+}
+
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group {
     display: flex;
     flex-direction: column;
@@ -2210,6 +2338,11 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     white-space: normal !important;
     overflow-wrap: anywhere !important;
     word-break: break-word !important;
+}
+
+#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-prompt-name-visual-only {
+    pointer-events: none !important;
+    cursor: inherit !important;
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head {
@@ -2373,6 +2506,10 @@ body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMP
 }
 
 @media (prefers-reduced-motion: reduce) {
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-toggle,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-body,
+    #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-list,
     #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group,
     #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body,
     #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-list {
@@ -3291,20 +3428,22 @@ function syncPresetVuePromptGroupBodyMountState(model) {
     const validGroupIds = new Set();
 
     for (const item of model.items) {
-        if (item?.type !== 'group' || !item.groupId) {
+        const mountId = getPresetVuePromptBodyMountId(item);
+
+        if (!mountId) {
             continue;
         }
 
-        validGroupIds.add(item.groupId);
+        validGroupIds.add(mountId);
 
         if (!item.collapsed) {
-            clearPresetVuePromptGroupBodyUnmountTimer(manager, item.groupId);
-            model.mountedGroupBodies[item.groupId] = true;
+            clearPresetVuePromptGroupBodyUnmountTimer(manager, mountId);
+            model.mountedGroupBodies[mountId] = true;
             continue;
         }
 
-        if (!hasPresetVuePromptGroupBodyUnmountTimer(manager, item.groupId)) {
-            delete model.mountedGroupBodies[item.groupId];
+        if (!hasPresetVuePromptGroupBodyUnmountTimer(manager, mountId)) {
+            delete model.mountedGroupBodies[mountId];
         }
     }
 
@@ -3314,6 +3453,18 @@ function syncPresetVuePromptGroupBodyMountState(model) {
             clearPresetVuePromptGroupBodyUnmountTimer(manager, groupId);
         }
     }
+}
+
+function getPresetVuePromptBodyMountId(item) {
+    if (item?.type === 'group' && item.groupId) {
+        return item.groupId;
+    }
+
+    if (item?.type === 'favorites') {
+        return PRESET_VUE_FAVORITES_ENTRY_ID;
+    }
+
+    return null;
 }
 
 function getPresetVuePromptGroupBodyUnmountTimers(manager = getPresetVuePromptListManagerState()) {
@@ -3372,12 +3523,14 @@ function setPresetVuePromptGroupBodyMounted(model, groupId, mounted) {
 }
 
 function isPresetVuePromptGroupBodyMounted(model, item) {
-    if (!item?.groupId) {
+    const mountId = getPresetVuePromptBodyMountId(item);
+
+    if (!mountId) {
         return false;
     }
 
     return item.collapsed
-        ? Boolean(model?.mountedGroupBodies?.[item.groupId])
+        ? Boolean(model?.mountedGroupBodies?.[mountId])
         : true;
 }
 
@@ -3394,7 +3547,7 @@ function schedulePresetVuePromptGroupBodyUnmount(groupId) {
     const timer = setTimeout(() => {
         clearPresetVuePromptGroupBodyUnmountTimer(manager, groupId);
 
-        const groupItem = model.items?.find(item => item?.type === 'group' && item.groupId === groupId);
+        const groupItem = model.items?.find(item => getPresetVuePromptBodyMountId(item) === groupId);
 
         if (!groupItem || groupItem.collapsed) {
             setPresetVuePromptGroupBodyMounted(model, groupId, false);
@@ -3541,13 +3694,16 @@ function assignNewPresetPromptsToNeighborGroup(groupState, promptIds, previousPr
 
 function buildPresetVuePromptListItems() {
     const promptOrder = promptManager.getPromptOrderForCharacter?.(promptManager.activeCharacter) ?? [];
+    const promptOrderIds = promptOrder.map(entry => entry?.identifier).filter(Boolean);
     const prompts = Array.isArray(promptManager.serviceSettings?.prompts)
         ? promptManager.serviceSettings.prompts.filter(Boolean)
         : [];
     const promptById = new Map(prompts.map(prompt => [prompt.identifier, prompt]));
     const groupState = getPresetPromptGroupState();
-    normalizePresetPromptGroupState(groupState, new Set(promptOrder.map(entry => entry?.identifier).filter(Boolean)));
+    normalizePresetPromptGroupState(groupState, new Set(promptOrderIds));
     const groupsById = new Map(groupState.groups.map(group => [group.id, group]));
+    const favoriteState = getCurrentPresetPromptFavoritesState(promptOrderIds);
+    const favoritePromptIds = new Set(favoriteState.promptIds);
     const counts = promptManager.tokenHandler?.getCounts?.() ?? {};
     const tokenBudget = promptManager.serviceSettings.openai_max_context - promptManager.serviceSettings.openai_max_tokens;
     const isTokenUsageWarning = promptManager.tokenUsage > tokenBudget * 0.8;
@@ -3576,6 +3732,7 @@ function buildPresetVuePromptListItems() {
                 prompt,
                 orderEntry: listEntry,
                 enabled: listEntry?.enabled !== false,
+                favorite: favoritePromptIds.has(prompt.identifier),
                 tokens,
                 calculatedTokens: tokens ? String(tokens) : '-',
                 warningClass,
@@ -3585,10 +3742,27 @@ function buildPresetVuePromptListItems() {
         })
         .filter(Boolean);
 
+    const favoriteChildren = promptItems
+        .filter(item => item.favorite)
+        .map(item => ({
+            ...item,
+            favoriteMirror: true,
+        }));
     const items = [
         { id: PRESET_VUE_HEADER_ENTRY_ID, type: 'header' },
         { id: PRESET_VUE_SEPARATOR_ENTRY_ID, type: 'separator' },
     ];
+
+    if (favoriteChildren.length > 0) {
+        items.push({
+            id: PRESET_VUE_FAVORITES_ENTRY_ID,
+            type: 'favorites',
+            count: favoriteChildren.length,
+            collapsed: Boolean(favoriteState.collapsed),
+            children: favoriteChildren,
+        });
+    }
+
     const groupItemsById = new Map();
 
     for (const item of promptItems) {
@@ -4151,7 +4325,9 @@ function getPresetVuePromptManualTopLevelDropPlacementAtPoint(model, draggedItem
         return null;
     }
 
-    const index = getPresetVuePromptManualDropIndexFromLayout(topLayout, point, { minIndex: 2 });
+    const index = getPresetVuePromptManualDropIndexFromLayout(topLayout, point, {
+        minIndex: getPresetVuePromptTopLevelContentStartIndex(model),
+    });
 
     return {
         targetType: 'top-level',
@@ -4755,8 +4931,29 @@ function isPresetVuePromptTransientDragElement(element) {
 }
 
 function clampPresetVuePromptTopLevelDropIndex(model, index) {
-    const maxIndex = Array.isArray(model?.items) ? model.items.length : 2;
-    return Math.max(2, Math.min(Number(index) || 2, maxIndex));
+    const minIndex = getPresetVuePromptTopLevelContentStartIndex(model);
+    const maxIndex = Array.isArray(model?.items) ? model.items.length : minIndex;
+    return Math.max(minIndex, Math.min(Number(index) || minIndex, maxIndex));
+}
+
+function getPresetVuePromptTopLevelContentStartIndex(model) {
+    if (!Array.isArray(model?.items)) {
+        return 2;
+    }
+
+    let index = 0;
+
+    while (index < model.items.length) {
+        const type = model.items[index]?.type;
+
+        if (type !== 'header' && type !== 'favorites' && type !== 'separator') {
+            break;
+        }
+
+        index += 1;
+    }
+
+    return index;
 }
 
 function removePresetVuePromptItemFromModel(model, promptId) {
@@ -4836,11 +5033,67 @@ function renderPresetVuePromptEntry(h, vueDraggableNext, item) {
         return renderPresetVuePromptListSeparator(h);
     }
 
+    if (item?.type === 'favorites') {
+        return renderPresetVuePromptFavorites(h, item);
+    }
+
     if (item?.type === 'group') {
         return renderPresetVuePromptGroup(h, vueDraggableNext, item);
     }
 
     return renderPresetVuePromptRow(h, item, { topLevel: true });
+}
+
+function renderPresetVuePromptFavorites(h, item) {
+    const children = Array.isArray(item?.children) ? item.children : [];
+    const model = getPresetVuePromptListManagerState().state;
+    const mounted = isPresetVuePromptGroupBodyMounted(model, item);
+
+    if (!children.length) {
+        return null;
+    }
+
+    return h('li', {
+        class: [
+            'bai-bai-preset-favorites',
+            item.collapsed ? 'bai-bai-preset-favorites-collapsed' : '',
+        ],
+        key: PRESET_VUE_FAVORITES_ENTRY_ID,
+    }, [
+        h('div', {
+            class: 'bai-bai-preset-favorites-header',
+            onClick: event => {
+                event.preventDefault();
+                event.stopPropagation();
+                togglePresetVuePromptFavoritesCollapsed();
+            },
+        }, [
+            h('span', { class: 'bai-bai-preset-favorites-title' }, [
+                h('span', {
+                    class: [
+                        'menu_button',
+                        'bai-bai-preset-favorites-toggle',
+                        'fa-solid',
+                        'fa-chevron-down',
+                    ],
+                    title: item.collapsed ? t`展开收藏` : t`收起收藏`,
+                }),
+                h('span', { class: 'fa-solid fa-star bai-bai-preset-favorites-icon', title: t`收藏` }),
+                h('strong', null, t`收藏`),
+                h('small', { class: 'bai-bai-preset-favorites-count' }, `(${children.length})`),
+            ]),
+        ]),
+        h('div', {
+            class: 'bai-bai-preset-favorites-body',
+            'aria-hidden': item.collapsed ? 'true' : 'false',
+        }, [
+            h('div', { class: 'bai-bai-preset-favorites-body-inner' }, mounted ? [
+                h('ul', { class: 'bai-bai-preset-favorites-list' }, children.map(child => renderPresetVuePromptRow(h, child, {
+                    favoriteMirror: true,
+                }))),
+            ] : []),
+        ]),
+    ]);
 }
 
 function renderPresetVuePromptGroup(h, vueDraggableNext, item) {
@@ -5585,19 +5838,19 @@ function setPresetVuePromptDragScrollGuardEnabled(enabled) {
     delete extensionState[PRESET_VUE_TOUCH_SCROLL_GUARD_KEY];
 }
 
-function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = false } = {}) {
+function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = false, favoriteMirror = false } = {}) {
     const prefix = promptManager?.configuration?.prefix ?? '';
     const prompt = item.prompt;
     const isEnabled = item.enabled !== false && item.orderEntry?.enabled !== false;
     const markerClass = prompt.marker ? `${prefix}prompt_manager_marker` : '';
     const importantClass = getPromptImportantClass(prompt, prefix);
     const manager = getPresetVuePromptListManagerState();
-    const rangeClasses = getPresetVuePromptRangeClasses(manager.state, item);
+    const rangeClasses = favoriteMirror ? [] : getPresetVuePromptRangeClasses(manager.state, item);
 
     return h('li', {
         class: [
             `${prefix}prompt_manager_prompt`,
-            `${prefix}prompt_manager_prompt_draggable`,
+            favoriteMirror ? 'bai-bai-preset-favorite-prompt' : `${prefix}prompt_manager_prompt_draggable`,
             topLevel ? PRESET_VUE_TOP_LEVEL_DRAGGABLE_CLASS : '',
             groupChild ? PRESET_VUE_GROUP_CHILD_DRAGGABLE_CLASS : '',
             isEnabled ? '' : `${prefix}prompt_manager_prompt_disabled`,
@@ -5607,15 +5860,21 @@ function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = fals
         ],
         'data-pm-identifier': prompt.identifier,
         'data-preset-group-id': item.groupId || '',
-        key: prompt.identifier,
-        onClickCapture: event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
-        onClick: event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
-        onMouseenter: () => updatePresetVuePromptRangeSelectionHover(manager.state, item),
+        'data-preset-favorite-mirror': favoriteMirror ? 'true' : undefined,
+        key: favoriteMirror ? `favorite:${prompt.identifier}` : prompt.identifier,
+        onClickCapture: favoriteMirror ? undefined : event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
+        onClick: favoriteMirror ? undefined : event => handlePresetVuePromptRangeSelectionClick(manager.state, item, event),
+        onMouseenter: favoriteMirror ? undefined : () => updatePresetVuePromptRangeSelectionHover(manager.state, item),
     }, [
-        h('span', { class: 'drag-handle ui-sortable-handle' }, '\u2630'),
-        renderPresetVuePromptNameCell(h, prompt, prefix),
+        favoriteMirror
+            ? h('span', {
+                class: 'drag-handle ui-sortable-handle bai-bai-preset-favorite-row-marker',
+                title: t`收藏快捷项不可拖拽`,
+            }, '\u2630')
+            : h('span', { class: 'drag-handle ui-sortable-handle' }, '\u2630'),
+        renderPresetVuePromptNameCell(h, prompt, prefix, { allowInspect: !favoriteMirror }),
         h('span', null, [
-            h('span', { class: 'prompt_manager_prompt_controls' }, renderPresetVuePromptControls(h, prompt, item)),
+            h('span', { class: 'prompt_manager_prompt_controls' }, renderPresetVuePromptControls(h, prompt, item, { favoriteMirror })),
         ]),
         h('span', {
             class: 'prompt_manager_prompt_tokens',
@@ -5630,7 +5889,7 @@ function renderPresetVuePromptRow(h, item, { topLevel = false, groupChild = fals
     ]);
 }
 
-function renderPresetVuePromptNameCell(h, prompt, prefix) {
+function renderPresetVuePromptNameCell(h, prompt, prefix, { allowInspect = true } = {}) {
     const promptName = prompt.name ?? '';
     const isMarkerPrompt = prompt.marker && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
     const isSystemPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && !prompt.forbid_overrides;
@@ -5652,9 +5911,13 @@ function renderPresetVuePromptNameCell(h, prompt, prefix) {
     if (isUserPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-asterisk', 'Preset Prompt'), ' ');
     if (isInjectionPrompt) children.push(renderPresetVueIcon(h, 'fa-fw fa-solid fa-syringe', 'In-Chat Injection'), ' ');
 
-    children.push(promptManager.isPromptInspectionAllowed?.(prompt)
+    const canInspect = promptManager.isPromptInspectionAllowed?.(prompt);
+    children.push(allowInspect && canInspect
         ? h('a', { title: promptName, class: 'prompt-manager-inspect-action' }, promptName)
-        : h('span', { title: promptName }, promptName));
+        : h('span', {
+            title: promptName,
+            class: canInspect ? 'prompt-manager-inspect-action bai-bai-preset-prompt-name-visual-only' : '',
+        }, promptName));
 
     if (role) {
         children.push(' ', h('span', {
@@ -6063,6 +6326,159 @@ function getCurrentPresetPromptOrderIds() {
         .filter(Boolean);
 }
 
+function getCurrentPresetPromptFavorites(validPromptIds = getCurrentPresetPromptOrderIds()) {
+    return getCurrentPresetPromptFavoritesState(validPromptIds).promptIds;
+}
+
+function getCurrentPresetPromptFavoritesState(validPromptIds = getCurrentPresetPromptOrderIds()) {
+    return normalizePresetPromptFavoritesState(
+        readCurrentPresetExtensionField(PRESET_FAVORITES_EXTENSION_PATH),
+        validPromptIds,
+    );
+}
+
+function normalizePresetPromptFavoritesState(value, validPromptIds = getCurrentPresetPromptOrderIds()) {
+    return {
+        version: 1,
+        promptIds: normalizePresetPromptFavorites(value, validPromptIds),
+        collapsed: Boolean(value && typeof value === 'object' && !Array.isArray(value) && value.collapsed),
+    };
+}
+
+function normalizePresetPromptFavorites(value, validPromptIds = getCurrentPresetPromptOrderIds()) {
+    const source = Array.isArray(value)
+        ? value
+        : Array.isArray(value?.promptIds)
+            ? value.promptIds
+            : [];
+    const validPromptIdSet = validPromptIds instanceof Set
+        ? validPromptIds
+        : new Set((validPromptIds ?? []).filter(Boolean));
+    const shouldFilter = validPromptIdSet.size > 0;
+    const seen = new Set();
+    const favorites = [];
+
+    for (const rawPromptId of source) {
+        const promptId = String(rawPromptId || '');
+
+        if (!promptId || seen.has(promptId)) {
+            continue;
+        }
+
+        if (shouldFilter && !validPromptIdSet.has(promptId)) {
+            continue;
+        }
+
+        seen.add(promptId);
+        favorites.push(promptId);
+    }
+
+    return favorites;
+}
+
+function isCurrentPresetPromptFavorite(promptId) {
+    return Boolean(promptId && getCurrentPresetPromptFavorites().includes(promptId));
+}
+
+function toggleCurrentPresetPromptFavorite(promptId) {
+    if (!promptId) {
+        return false;
+    }
+
+    const favorites = getCurrentPresetPromptFavorites();
+    const nextFavorites = favorites.includes(promptId)
+        ? favorites.filter(id => id !== promptId)
+        : [...favorites, promptId];
+
+    if (!setCurrentPresetPromptFavorites(nextFavorites)) {
+        return favorites.includes(promptId);
+    }
+
+    syncPresetVuePromptListManagerState();
+    preparePromptManagerCustomDragList(getPromptManagerListElement());
+    return nextFavorites.includes(promptId);
+}
+
+function removeCurrentPresetPromptFavorite(promptId) {
+    if (!promptId) {
+        return false;
+    }
+
+    const favorites = getCurrentPresetPromptFavorites();
+
+    if (!favorites.includes(promptId)) {
+        return false;
+    }
+
+    return setCurrentPresetPromptFavorites(favorites.filter(id => id !== promptId));
+}
+
+function setCurrentPresetPromptFavorites(favoriteIds, { persist = true } = {}) {
+    return setCurrentPresetPromptFavoritesState({ promptIds: favoriteIds }, { persist });
+}
+
+function setCurrentPresetPromptFavoritesState(nextState, { persist = true } = {}) {
+    const presetName = oai_settings?.preset_settings_openai;
+
+    if (!presetName) {
+        return false;
+    }
+
+    const validPromptIds = getCurrentPresetPromptOrderIds();
+    const currentState = getCurrentPresetPromptFavoritesState(validPromptIds);
+    const normalizedState = {
+        version: 1,
+        promptIds: normalizePresetPromptFavorites(nextState?.promptIds, validPromptIds),
+        collapsed: nextState?.collapsed === undefined ? currentState.collapsed : Boolean(nextState.collapsed),
+    };
+
+    if (
+        currentState.collapsed === normalizedState.collapsed
+        && areStringArraysEqual(currentState.promptIds, normalizedState.promptIds)
+    ) {
+        return false;
+    }
+
+    applyPresetPromptFavoritesToMemory(presetName, normalizedState);
+    syncCurrentOpenAiPresetCacheFromSettings(presetName);
+
+    if (persist) {
+        markOpenAiPresetSavePending(presetName);
+        void saveSettings().catch(error => {
+            console.debug(`${LOG_PREFIX} Failed to save preset prompt favorites`, error);
+        });
+    }
+
+    return true;
+}
+
+function applyPresetPromptFavoritesToMemory(presetName, favoritesState) {
+    const normalizedState = normalizePresetPromptFavoritesState(favoritesState, getCurrentPresetPromptOrderIds());
+
+    if (oai_settings?.preset_settings_openai === presetName) {
+        oai_settings.extensions = oai_settings.extensions && typeof oai_settings.extensions === 'object'
+            ? oai_settings.extensions
+            : {};
+        setObjectPath(oai_settings.extensions, PRESET_FAVORITES_EXTENSION_PATH, normalizedState);
+
+        if (promptManager?.serviceSettings && typeof promptManager.serviceSettings === 'object') {
+            promptManager.serviceSettings.extensions = promptManager.serviceSettings.extensions && typeof promptManager.serviceSettings.extensions === 'object'
+                ? promptManager.serviceSettings.extensions
+                : {};
+            setObjectPath(promptManager.serviceSettings.extensions, PRESET_FAVORITES_EXTENSION_PATH, normalizedState);
+        }
+    }
+
+    const preset = getPresetManager('openai')?.getCompletionPresetByName?.(presetName);
+
+    if (preset) {
+        preset.extensions = preset.extensions && typeof preset.extensions === 'object'
+            ? preset.extensions
+            : {};
+        setObjectPath(preset.extensions, PRESET_FAVORITES_EXTENSION_PATH, normalizedState);
+    }
+}
+
 function readCurrentPresetExtensionField(path) {
     const presetName = oai_settings?.preset_settings_openai;
     const presetManager = getPresetManager('openai');
@@ -6378,12 +6794,22 @@ function getPresetVuePromptFlatIds(model = getPresetVuePromptListManagerState().
     return promptIds;
 }
 
-function getPresetVuePromptItemsFromModel(model = getPresetVuePromptListManagerState().state) {
+function getPresetVuePromptItemsFromModel(
+    model = getPresetVuePromptListManagerState().state,
+    { includeFavoriteMirrors = false } = {},
+) {
     const promptItems = [];
 
     for (const item of model?.items ?? []) {
         if (item?.type === 'prompt') {
             promptItems.push(item);
+            continue;
+        }
+
+        if (item?.type === 'favorites') {
+            if (includeFavoriteMirrors) {
+                promptItems.push(...(item.children ?? []).filter(child => child?.type === 'prompt'));
+            }
             continue;
         }
 
@@ -6426,7 +6852,7 @@ function sanitizePresetVuePromptListModel(model) {
     };
 
     for (const item of model.items) {
-        if (item?.type === 'header' || item?.type === 'separator') {
+        if (item?.type === 'header' || item?.type === 'separator' || item?.type === 'favorites') {
             if (seenStaticIds.has(item.type)) {
                 changed = true;
                 continue;
@@ -6525,6 +6951,34 @@ function getPresetVuePromptRangeClasses(model, item) {
     }
 
     return classes;
+}
+
+function togglePresetVuePromptFavoritesCollapsed() {
+    const manager = getPresetVuePromptListManagerState();
+    const model = manager.state;
+    const favoritesState = getCurrentPresetPromptFavoritesState();
+    const nextCollapsed = !favoritesState.collapsed;
+    const mountId = PRESET_VUE_FAVORITES_ENTRY_ID;
+
+    if (!nextCollapsed) {
+        clearPresetVuePromptGroupBodyUnmountTimer(manager, mountId);
+        setPresetVuePromptGroupBodyMounted(model, mountId, true);
+    }
+
+    const modelFavorites = model?.items?.find(item => item?.type === 'favorites');
+
+    if (modelFavorites) {
+        modelFavorites.collapsed = nextCollapsed;
+    }
+
+    if (nextCollapsed) {
+        schedulePresetVuePromptGroupBodyUnmount(mountId);
+    }
+
+    setCurrentPresetPromptFavoritesState({
+        promptIds: favoritesState.promptIds,
+        collapsed: nextCollapsed,
+    });
 }
 
 function togglePresetVuePromptGroupCollapsed(groupId) {
@@ -6656,7 +7110,7 @@ async function deletePresetVuePromptGroup(groupId) {
     syncPresetVuePromptListManagerState();
 }
 
-function renderPresetVuePromptControls(h, prompt, item) {
+function renderPresetVuePromptControls(h, prompt, item, { favoriteMirror = false } = {}) {
     const canDelete = promptManager.isPromptDeletionAllowed?.(prompt) ?? false === prompt.system_prompt;
     const canEdit = promptManager.isPromptEditAllowed?.(prompt) ?? (FORCE_EDIT_PROMPTS.has(prompt.identifier) || !prompt.marker);
     const canToggle = promptManager.isPromptToggleAllowed?.(prompt) ?? (
@@ -6665,8 +7119,59 @@ function renderPresetVuePromptControls(h, prompt, item) {
             : !(promptManager.configuration.toggleDisabled ?? []).includes(prompt.identifier)
     );
     const isEnabled = item.enabled !== false && item.orderEntry?.enabled !== false;
+    const isFavorite = item.favorite !== false && (item.favorite || isCurrentPresetPromptFavorite(prompt.identifier));
+    const favoriteToggle = renderPresetVuePromptActionButton(h, {
+        action: 'favorite',
+        icon: 'fa-star',
+        text: isFavorite ? t`取消收藏` : t`收藏`,
+        extraClasses: [
+            'bai-bai-preset-prompt-favorite-toggle',
+            isFavorite ? 'bai-bai-preset-prompt-favorite-toggle-active' : '',
+        ],
+        onClick: event => handlePresetPromptActionButtonClick(event),
+    });
+    const persistentFavoriteToggle = isFavorite
+        ? renderPresetVuePromptActionButton(h, {
+            action: 'favorite',
+            icon: 'fa-star',
+            text: t`取消收藏`,
+            extraClasses: [
+                'bai-bai-preset-prompt-favorite-toggle',
+                'bai-bai-preset-prompt-favorite-toggle-active',
+                'bai-bai-preset-prompt-favorite-toggle-persistent',
+            ],
+            onClick: event => handlePresetPromptActionButtonClick(event),
+        })
+        : null;
+    const editButton = canEdit
+        ? renderPresetVuePromptActionButton(h, {
+            action: 'edit',
+            icon: 'fa-pencil',
+            text: t`编辑`,
+            onClick: event => handlePresetPromptActionButtonClick(event),
+        })
+        : null;
+
+    if (favoriteMirror) {
+        return [
+            persistentFavoriteToggle,
+            editButton,
+            canToggle
+                ? h('span', {
+                    title: isEnabled ? t`关闭条目` : t`开启条目`,
+                    class: [
+                        'menu_button',
+                        'bai-bai-preset-prompt-icon-button',
+                        'prompt-manager-toggle-action',
+                        isEnabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off',
+                    ],
+                })
+                : null,
+        ].filter(Boolean);
+    }
 
     return [
+        persistentFavoriteToggle,
         h('span', {
             title: t`更多操作`,
             class: 'menu_button bai-bai-preset-prompt-icon-button bai-bai-preset-prompt-actions-hint fa-solid fa-ellipsis',
@@ -6678,6 +7183,7 @@ function renderPresetVuePromptControls(h, prompt, item) {
             },
         }),
         h('span', { class: 'bai-bai-preset-prompt-actions' }, [
+            favoriteToggle,
             canDelete
                 ? renderPresetVuePromptActionButton(h, {
                     action: 'delete',
@@ -6693,14 +7199,7 @@ function renderPresetVuePromptControls(h, prompt, item) {
                 text: t`复制`,
                 onClick: event => handlePresetPromptActionButtonClick(event),
             }),
-            canEdit
-                ? renderPresetVuePromptActionButton(h, {
-                    action: 'edit',
-                    icon: 'fa-pencil',
-                    text: t`编辑`,
-                    onClick: event => handlePresetPromptActionButtonClick(event),
-                })
-                : null,
+            editButton,
         ].filter(Boolean)),
         canToggle
             ? h('span', {
@@ -6716,7 +7215,7 @@ function renderPresetVuePromptControls(h, prompt, item) {
     ];
 }
 
-function renderPresetVuePromptActionButton(h, { action, icon, text, caution = false, onClick = null }) {
+function renderPresetVuePromptActionButton(h, { action, icon, text, caution = false, extraClasses = [], onClick = null }) {
     return h('span', {
         class: [
             'menu_button',
@@ -6724,6 +7223,7 @@ function renderPresetVuePromptActionButton(h, { action, icon, text, caution = fa
             'fa-solid',
             icon,
             caution ? 'caution' : '',
+            ...extraClasses,
         ],
         title: text,
         'data-preset-prompt-action': action,
@@ -7403,16 +7903,19 @@ function removeUnusedPresetPromptGroups(groupState) {
 
 function updatePresetVuePromptItemEnabled(promptId, enabled) {
     const manager = getPresetVuePromptListManagerState();
-    const item = getPresetVuePromptItemsFromModel(manager.state).find(item => item?.id === promptId);
+    const items = getPresetVuePromptItemsFromModel(manager.state, { includeFavoriteMirrors: true })
+        .filter(item => item?.id === promptId);
 
-    if (!item) {
+    if (!items.length) {
         return;
     }
 
-    item.enabled = Boolean(enabled);
+    for (const item of items) {
+        item.enabled = Boolean(enabled);
 
-    if (item.orderEntry) {
-        item.orderEntry.enabled = Boolean(enabled);
+        if (item.orderEntry) {
+            item.orderEntry.enabled = Boolean(enabled);
+        }
     }
 }
 
@@ -8662,6 +9165,16 @@ async function handlePresetPromptActionButtonClick(event, action = null) {
     }
 
     const presetAction = action.getAttribute('data-preset-prompt-action');
+    const promptId = getPresetPromptIdFromAction(action);
+
+    if (presetAction === 'favorite') {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        closePresetPromptActionMenus();
+        toggleCurrentPresetPromptFavorite(promptId);
+        return;
+    }
 
     if (presetAction === 'copy') {
         event.preventDefault?.();
@@ -8683,6 +9196,8 @@ async function handlePresetPromptActionButtonClick(event, action = null) {
         if (!confirmed) {
             return;
         }
+
+        removeCurrentPresetPromptFavorite(promptId);
     }
 
     const isDetachAction = presetAction === 'delete' || action.classList.contains('prompt-manager-detach-action');
@@ -8721,6 +9236,14 @@ async function handlePresetPromptActionButtonClick(event, action = null) {
             promptManager.saveServiceSettings = originalSaveServiceSettings;
         }
     }
+}
+
+function getPresetPromptIdFromAction(action) {
+    const row = action instanceof Element
+        ? action.closest(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt[data-pm-identifier]`)
+        : null;
+
+    return row?.dataset?.pmIdentifier || null;
 }
 
 function togglePresetPromptActionMenu(button) {
@@ -9275,9 +9798,12 @@ function handlePresetPromptToggleClick(event) {
         counts[promptId] = null;
     }
 
-    updatePromptToggleRow(row, toggle, promptOrderEntry.enabled);
+    for (const promptRow of findPromptManagerRows(promptId)) {
+        updatePromptToggleRow(promptRow, promptRow.querySelector('.prompt-manager-toggle-action'), promptOrderEntry.enabled);
+        updatePromptTokenCell(promptRow, null);
+    }
+
     updatePresetVuePromptItemEnabled(promptId, promptOrderEntry.enabled);
-    updatePromptTokenCell(row, null);
     markPresetPromptServiceSettingsSavePending();
     markOpenAiPresetSavePending();
 
@@ -9464,8 +9990,11 @@ function waitForOpenAiPresetUpdateFallback() {
 
 function updatePromptToggleRow(row, toggle, isEnabled) {
     row.classList.toggle('completion_prompt_manager_prompt_disabled', !isEnabled);
-    toggle.classList.toggle('fa-toggle-on', isEnabled);
-    toggle.classList.toggle('fa-toggle-off', !isEnabled);
+
+    if (toggle) {
+        toggle.classList.toggle('fa-toggle-on', isEnabled);
+        toggle.classList.toggle('fa-toggle-off', !isEnabled);
+    }
 }
 
 function updatePromptTokenCell(row, value) {
@@ -9493,9 +10022,9 @@ function updateQuickEditPrompt(promptId, prompt) {
 }
 
 function updatePromptManagerRowFromPrompt(prompt) {
-    const row = findPromptManagerRow(prompt.identifier);
+    const rows = findPromptManagerRows(prompt.identifier);
 
-    if (!row) {
+    if (!rows.length) {
         return;
     }
 
@@ -9503,31 +10032,39 @@ function updatePromptManagerRowFromPrompt(prompt) {
     const isEnabled = listEntry?.enabled ?? true;
     const isImportantPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && prompt.forbid_overrides;
 
-    row.classList.toggle('completion_prompt_manager_prompt_disabled', !isEnabled);
-    row.classList.toggle('completion_prompt_manager_marker', Boolean(prompt.marker));
-    row.classList.toggle('completion_prompt_manager_important', Boolean(isImportantPrompt));
+    for (const row of rows) {
+        row.classList.toggle('completion_prompt_manager_prompt_disabled', !isEnabled);
+        row.classList.toggle('completion_prompt_manager_marker', Boolean(prompt.marker));
+        row.classList.toggle('completion_prompt_manager_important', Boolean(isImportantPrompt));
 
-    const nameContainer = row.querySelector('.completion_prompt_manager_prompt_name');
+        const nameContainer = row.querySelector('.completion_prompt_manager_prompt_name');
 
-    if (nameContainer) {
-        renderPromptNameCell(nameContainer, prompt);
+        if (nameContainer) {
+            renderPromptNameCell(nameContainer, prompt, {
+                allowInspect: row.dataset.presetFavoriteMirror !== 'true',
+            });
+        }
+
+        updatePromptTokenCell(row, null);
     }
-
-    updatePromptTokenCell(row, null);
 }
 
 function findPromptManagerRow(promptId) {
+    return findPromptManagerRows(promptId)[0] ?? null;
+}
+
+function findPromptManagerRows(promptId) {
     const list = document.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
 
     if (!list) {
-        return null;
+        return [];
     }
 
     return Array.from(list.querySelectorAll('li.completion_prompt_manager_prompt[data-pm-identifier]'))
-        .find(row => row.dataset.pmIdentifier === promptId) ?? null;
+        .filter(row => row.dataset.pmIdentifier === promptId);
 }
 
-function renderPromptNameCell(container, prompt) {
+function renderPromptNameCell(container, prompt, { allowInspect = true } = {}) {
     const promptName = prompt.name ?? '';
     const isMarkerPrompt = prompt.marker && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE;
     const isSystemPrompt = !prompt.marker && prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE && !prompt.forbid_overrides;
@@ -9551,13 +10088,16 @@ function renderPromptNameCell(container, prompt) {
     if (isUserPrompt) appendIcon(container, 'fa-fw fa-solid fa-asterisk', 'Preset Prompt');
     if (isInjectionPrompt) appendIcon(container, 'fa-fw fa-solid fa-syringe', 'In-Chat Injection');
 
-    const nameElement = document.createElement(promptManager.isPromptInspectionAllowed?.(prompt) ? 'a' : 'span');
+    const canInspect = promptManager.isPromptInspectionAllowed?.(prompt);
+    const nameElement = document.createElement(allowInspect && canInspect ? 'a' : 'span');
     nameElement.title = promptName;
     nameElement.textContent = promptName;
 
     if (nameElement instanceof HTMLAnchorElement) {
         nameElement.className = 'prompt-manager-inspect-action';
         nameElement.addEventListener('click', promptManager.handleInspect);
+    } else if (canInspect) {
+        nameElement.className = 'prompt-manager-inspect-action bai-bai-preset-prompt-name-visual-only';
     }
 
     container.append(nameElement);
