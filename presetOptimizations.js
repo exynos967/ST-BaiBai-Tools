@@ -64,6 +64,7 @@ const PRESET_VUE_EMPTY_INSERT_THRESHOLD_PX = 40;
 const PRESET_VUE_GROUP_DROP_TARGET_MIN_HEIGHT_PX = 44;
 const PRESET_PENDING_CHANGES_VISIBILITY_CHECK_DELAY_MS = 120;
 const PRESET_PENDING_CHANGES_VISIBILITY_FALLBACK_DELAY_MS = 1000;
+const PRESET_PENDING_CHANGES_FOCUSOUT_CHECK_DELAY_MS = 60;
 const PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE = 1001;
 const PRESET_VUE_POINTER_START_THRESHOLD_PX = 4;
 const PRESET_VUE_TOUCH_DRAG_DELAY_MS = 320;
@@ -78,6 +79,7 @@ const OPENAI_PRESET_DELETE_SELECTOR = '#delete_oai_preset';
 const OPENAI_PRESET_UPDATE_SELECTOR = '#update_oai_preset';
 const OPENAI_PRESET_EXPORT_SELECTOR = '#export_oai_preset';
 const OPENAI_SETTINGS_SELECTOR = '#openai_settings';
+const LEFT_NAV_PANEL_SELECTOR = '#left-nav-panel';
 const PRESET_BACKUP_PREVIEW_UI_ID = 'bai_bai_toolkit_preset_backup_preview';
 const PRESET_BACKUP_PREVIEW_CLOSING_CLASS = 'bai-bai-preset-backup-closing';
 const PRESET_PROMPT_MANAGER_LIST_SELECTOR = '#completion_prompt_manager_list';
@@ -7704,15 +7706,54 @@ function installPresetPendingChangesLifecycleGuard() {
             console.debug(`${LOG_PREFIX} Failed to flush preset prompt changes during page lifecycle event`, error);
         });
     };
+    let lastLeftNavPointerDownAt = 0;
+    const leftNavPointerDownHandler = (event) => {
+        if (isNodeInsideLeftNavPanel(event.target)) {
+            lastLeftNavPointerDownAt = Date.now();
+        } else {
+            lastLeftNavPointerDownAt = 0;
+        }
+    };
+    const leftNavFocusOutHandler = (event) => {
+        if (!hasAutoFlushPendingPresetPromptChanges() || !isNodeInsideLeftNavPanel(event.target)) {
+            return;
+        }
+
+        if (isNodeInsideLeftNavPanel(event.relatedTarget)) {
+            return;
+        }
+
+        setTimeout(() => {
+            if (!hasAutoFlushPendingPresetPromptChanges()) {
+                return;
+            }
+
+            if (isFocusInsideLeftNavPanel()) {
+                return;
+            }
+
+            if (lastLeftNavPointerDownAt && Date.now() - lastLeftNavPointerDownAt < 300) {
+                return;
+            }
+
+            void flushPendingPresetPromptChanges({ includeOpenAiPresetSaves: false }).catch(error => {
+                console.debug(`${LOG_PREFIX} Failed to flush preset prompt changes after left panel focusout`, error);
+            });
+        }, PRESET_PENDING_CHANGES_FOCUSOUT_CHECK_DELAY_MS);
+    };
 
     extensionState[PRESET_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY] = {
         beforeUnloadHandler,
         pageLifecycleHandler,
+        leftNavPointerDownHandler,
+        leftNavFocusOutHandler,
     };
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
     window.addEventListener('pagehide', pageLifecycleHandler);
     document.addEventListener('visibilitychange', pageLifecycleHandler);
+    document.addEventListener('pointerdown', leftNavPointerDownHandler, true);
+    document.addEventListener('focusout', leftNavFocusOutHandler, true);
 }
 
 function schedulePendingPresetPromptChangesFlushCheck(delayMs = PRESET_PENDING_CHANGES_VISIBILITY_CHECK_DELAY_MS) {
@@ -7810,6 +7851,19 @@ function isPresetVisibilityElementVisible(element) {
 
     const style = getComputedStyle(element);
     return style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+function getLeftNavPanelElement() {
+    return document.querySelector(LEFT_NAV_PANEL_SELECTOR);
+}
+
+function isNodeInsideLeftNavPanel(node) {
+    const leftNavPanel = getLeftNavPanelElement();
+    return Boolean(leftNavPanel instanceof HTMLElement && node instanceof Node && leftNavPanel.contains(node));
+}
+
+function isFocusInsideLeftNavPanel() {
+    return isNodeInsideLeftNavPanel(document.activeElement);
 }
 
 function flushPendingPresetPromptChangesSafely() {
