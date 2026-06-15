@@ -25,14 +25,18 @@
                 </div>
 
                 <!-- 导航栏 -->
-                <div class="bai_bai_toolkit_tabs flex-container" style="border-bottom: 1px solid var(--SmartThemeBorderColor); gap: 4px; margin-bottom: 10px; margin-top: 5px;">
-                    <div class="bai_bai_toolkit_tab active" data-target="bai_bai_toolkit_tab_optimizations" style="flex: 1; text-align: center; color: var(--SmartThemeQuoteColor); border-bottom: 2px solid var(--SmartThemeQuoteColor); padding: 8px 12px; cursor: pointer; opacity: 1; transition: all 0.2s ease;">
+                <div class="bai_bai_toolkit_tabs flex-container"
+                    style="border-bottom: 1px solid var(--SmartThemeBorderColor); gap: 4px; margin-bottom: 10px; margin-top: 5px;">
+                    <div class="bai_bai_toolkit_tab active" data-target="bai_bai_toolkit_tab_optimizations"
+                        style="flex: 1; text-align: center; color: var(--SmartThemeQuoteColor); border-bottom: 2px solid var(--SmartThemeQuoteColor); padding: 8px 12px; cursor: pointer; opacity: 1; transition: all 0.2s ease;">
                         <i class="fa-solid fa-rocket"></i> 优化
                     </div>
-                    <div class="bai_bai_toolkit_tab" data-target="bai_bai_toolkit_tab_features" style="flex: 1; text-align: center; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; opacity: 0.6; transition: all 0.2s ease;">
+                    <div class="bai_bai_toolkit_tab" data-target="bai_bai_toolkit_tab_features"
+                        style="flex: 1; text-align: center; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; opacity: 0.6; transition: all 0.2s ease;">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> 功能
                     </div>
-                    <div class="bai_bai_toolkit_tab" data-target="bai_bai_toolkit_tab_baibaoku" style="flex: 1; text-align: center; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; opacity: 0.6; transition: all 0.2s ease;">
+                    <div class="bai_bai_toolkit_tab" data-target="bai_bai_toolkit_tab_baibaoku"
+                        style="flex: 1; text-align: center; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; opacity: 0.6; transition: all 0.2s ease;">
                         <i class="fa-solid fa-box-archive"></i> 柏宝库
                     </div>
                 </div>
@@ -40,8 +44,10 @@
                 <!-- 性能优化 (Optimizations) - 默认显示 -->
                 <div id="bai_bai_toolkit_tab_optimizations" class="bai_bai_toolkit_tab_content">
                     <!-- 1. 聊天优化 -->
-                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
-                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-comments"></i> 聊天优化</legend>
+                    <fieldset
+                        style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i
+                                class="fa-solid fa-comments"></i> 聊天优化</legend>
                         <div class="flex-container flexFlowColumn" style="gap: 5px;">
                             <label class="checkbox_label" for="bai_bai_toolkit_welcome_recent_chat_direct_open_enabled"
                                 title="从欢迎页最近聊天进入普通角色聊天时，直接打开目标聊天文件，避免先渲染角色上一次聊天。">
@@ -49,13 +55,15 @@
                                     class="checkbox">
                                 <span>主页进入聊天优化</span>
                             </label>
-                            <label class="checkbox_label" for="bai_bai_toolkit_long_chat_dom_render_optimization_enabled"
+                            <label class="checkbox_label"
+                                for="bai_bai_toolkit_long_chat_dom_render_optimization_enabled"
                                 title="长聊天进入后自动滚到底部，并在当前聊天 DOM 文本量较大时为楼层启用 content-visibility 和缓存占位高度，减少屏幕外楼层重排绘制。">
                                 <input id="bai_bai_toolkit_long_chat_dom_render_optimization_enabled" type="checkbox"
                                     class="checkbox">
                                 <span>长聊天渲染优化</span>
                             </label>
-                            <label class="checkbox_label" for="bai_bai_toolkit_message_completion_scroll_to_middle_enabled"
+                            <label class="checkbox_label"
+                                for="bai_bai_toolkit_message_completion_scroll_to_middle_enabled"
                                 title="生成开始时如果聊天停在底部，生成结束后将最新消息定位到聊天区域中部附近；如果生成期间手动滚动查看其它位置，则不会自动滚动。">
                                 <input id="bai_bai_toolkit_message_completion_scroll_to_middle_enabled" type="checkbox"
                                     class="checkbox">
@@ -68,24 +76,28 @@
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_chat_list_scroll_optimization_enabled"
                                 title="减少管理聊天文件列表屏幕外条目的布局和绘制，缓解大量聊天文件时的滚动卡顿。">
-                                <input id="bai_bai_toolkit_chat_list_scroll_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_chat_list_scroll_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>管理聊天文件滚动优化</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_chat_list_auto_clear_enabled"
                                 title="管理聊天文件窗口关闭后，清空已生成的聊天文件列表元素，减少关闭后的 DOM 占用。">
-                                <input id="bai_bai_toolkit_chat_list_auto_clear_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_chat_list_auto_clear_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>管理聊天文件关闭清理</span>
                             </label>
-                            <label class="checkbox_label" for="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled"
+                            <label class="checkbox_label"
+                                for="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled"
                                 title="用删除消息模式删楼后，允许上一层编辑区立即打开；发送、继续、冒充或重新生成前会先提交当前消息编辑。">
                                 <input id="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled" type="checkbox"
                                     class="checkbox">
                                 <span>删楼后快速编辑</span>
                             </label>
-                            <label class="checkbox_label" for="bai_bai_toolkit_translate_message_updated_optimization_enabled"
+                            <label class="checkbox_label"
+                                for="bai_bai_toolkit_translate_message_updated_optimization_enabled"
                                 title="自动翻译关闭且消息没有翻译缓存时，跳过翻译扩展在消息更新事件里的无效处理，避免长聊天反复全量保存。">
-                                <input id="bai_bai_toolkit_translate_message_updated_optimization_enabled" type="checkbox"
-                                    class="checkbox">
+                                <input id="bai_bai_toolkit_translate_message_updated_optimization_enabled"
+                                    type="checkbox" class="checkbox">
                                 <span>翻译更新事件保存优化</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_resize_guard_enabled"
@@ -114,8 +126,10 @@
                     </fieldset>
 
                     <!-- 2. 预设优化 -->
-                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
-                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-sliders"></i> 预设优化</legend>
+                    <fieldset
+                        style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i
+                                class="fa-solid fa-sliders"></i> 预设优化</legend>
                         <div class="flex-container flexFlowColumn" style="gap: 5px;">
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_prompt_codemirror_editor_enabled"
                                 title="使用 CodeMirror 替代预设条目 prompt 原生 textarea，并在保存前同步回 SillyTavern 原表单。">
@@ -125,27 +139,32 @@
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_scroll_optimization_enabled"
                                 title="对预设界面列表条目启用安全的绘制隔离，减少部分重绘开销。">
-                                <input id="bai_bai_toolkit_preset_scroll_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_preset_scroll_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>预设界面滚动优化</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_drag_optimization_enabled"
                                 title="拖拽预设条目时不实时挤开周围条目，只显示插入线，松手后才重排并保存。手机端使用长按拖拽，滑动会取消拖拽以避免误触。">
-                                <input id="bai_bai_toolkit_preset_drag_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_preset_drag_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>预设条目拖拽优化</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled"
                                 title="开启后，手机端可长按预设条目任意非按钮区域拖拽；关闭后，手机端只能长按左侧拖拽手柄。">
-                                <input id="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_preset_mobile_whole_row_drag_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>手机预设条目整条拖拽</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_switch_optimization_enabled"
                                 title="切换 OpenAI 预设后立即刷新预设条目列表，并在列表显示后再异步刷新 Token 统计。手机端会先收起预设下拉框，再继续执行切换逻辑。删除当前预设后会优先选中下一项。">
-                                <input id="bai_bai_toolkit_preset_switch_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_preset_switch_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>切换预设快速刷新</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_toggle_optimization_enabled"
                                 title="切换或保存已有预设条目时只更新当前条目，并延迟刷新 Token 统计，避免整份预设列表立即重建。">
-                                <input id="bai_bai_toolkit_preset_toggle_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_preset_toggle_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>预设快速操作</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_preset_grouping_enabled"
@@ -157,53 +176,65 @@
                     </fieldset>
 
                     <!-- 3. 其他优化 -->
-                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
-                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-desktop"></i> 其他优化</legend>
+                    <fieldset
+                        style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i
+                                class="fa-solid fa-desktop"></i> 其他优化</legend>
                         <div class="flex-container flexFlowColumn" style="gap: 5px;">
                             <label class="checkbox_label" for="bai_bai_toolkit_regex_quick_operation_enabled"
                                 title="启用后，正则条目的单条启用/禁用、编辑保存、删除和拖拽排序只更新对应 DOM，不立即重建整份正则列表。">
-                                <input id="bai_bai_toolkit_regex_quick_operation_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_regex_quick_operation_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>正则快速操作</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_description_codemirror_editor_enabled"
                                 title="使用 CodeMirror 6 替代原生 textarea 编辑角色描述；加载失败时直接恢复 ST 原版输入框。">
-                                <input id="bai_bai_toolkit_description_codemirror_editor_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_description_codemirror_editor_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>角色描述 CodeMirror 编辑器</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_custom_css_input_optimization_enabled"
                                 title="编辑用户设置里的自定义 CSS 时，使用 CodeMirror 接管可见编辑器，并在离开编辑框后再应用整段样式。">
-                                <input id="bai_bai_toolkit_custom_css_input_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_custom_css_input_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>自定义CSS CodeMirror 编辑器</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_custom_css_shadow_property_enabled"
                                 title="拦截原生自定义CSS的写入操作并将其移入JS内存，从物理层面消除原生输入框被写入长文本时引发的浏览器排版与绘制卡顿，完美解决切换主题或同步主题时的严重卡顿。开启此项会自动开启自定义CSS的 CodeMirror 编辑器。">
-                                <input id="bai_bai_toolkit_custom_css_shadow_property_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_custom_css_shadow_property_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>切换美化优化</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_world_info_drawer_optimization_enabled"
                                 title="世界书条目展开/收起时跳过高度动画，保留已初始化的编辑区，并延迟初始化部分较重的下拉控件和角色过滤选项。">
-                                <input id="bai_bai_toolkit_world_info_drawer_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_world_info_drawer_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>世界书条目快速展开</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_world_info_page_optimization_enabled"
                                 title="接管并优化世界书页面；后续会逐步替换原版世界书管理界面。">
-                                <input id="bai_bai_toolkit_world_info_page_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_world_info_page_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>世界书页面优化</span>
                             </label>
-                            <label class="checkbox_label" for="bai_bai_toolkit_character_search_input_optimization_enabled"
+                            <label class="checkbox_label"
+                                for="bai_bai_toolkit_character_search_input_optimization_enabled"
                                 title="拦截并防抖角色搜索输入框，解决拼音输入卡顿问题，并且大幅减少 DOM 重绘开销。">
-                                <input id="bai_bai_toolkit_character_search_input_optimization_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_character_search_input_optimization_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>角色搜索输入框优化</span>
                             </label>
 
                             <label class="checkbox_label" for="bai_bai_toolkit_character_list_avatar_lazy_load_enabled"
                                 title="进入角色列表、Persona 列表和欢迎页时先用占位图渲染离屏头像，滚动或展开到附近后再加载真实 /thumbnail 缩略图，并启用 content-visibility。">
-                                <input id="bai_bai_toolkit_character_list_avatar_lazy_load_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_character_list_avatar_lazy_load_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>头像缩略图懒加载</span>
                             </label>
 
-                            <div class="bai_bai_toolkit_perf_trace flex-container flexFlowColumn" style="display: none !important;"
-                                aria-hidden="true" style="gap: 6px; padding: 6px 5px;">
+                            <div class="bai_bai_toolkit_perf_trace flex-container flexFlowColumn"
+                                style="display: none !important;" aria-hidden="true"
+                                style="gap: 6px; padding: 6px 5px;">
                                 <div class="flex-container alignItemCenter flexGap5">
                                     <span style="opacity: 0.8;">Performance trace</span>
                                     <div id="bai_bai_toolkit_perf_trace_start" class="menu_button menu_button_icon"
@@ -211,7 +242,8 @@
                                         <i class="fa-solid fa-circle-play"></i>
                                         <span>Start</span>
                                     </div>
-                                    <div id="bai_bai_toolkit_perf_trace_stop" class="menu_button menu_button_icon disabled"
+                                    <div id="bai_bai_toolkit_perf_trace_stop"
+                                        class="menu_button menu_button_icon disabled"
                                         title="Stop recording and export a txt diagnostics file.">
                                         <i class="fa-solid fa-file-export"></i>
                                         <span>Stop &amp; Export TXT</span>
@@ -224,26 +256,36 @@
                 </div>
 
                 <!-- 柏宝库 (BaiBaoKu) - 默认隐藏 -->
-                <div id="bai_bai_toolkit_tab_baibaoku" class="bai_bai_toolkit_tab_content" style="display: none; padding-top: 5px;">
-                    <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
-                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-box-archive"></i> 柏宝库</legend>
+                <div id="bai_bai_toolkit_tab_baibaoku" class="bai_bai_toolkit_tab_content"
+                    style="display: none; padding-top: 5px;">
+                    <fieldset
+                        style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                        <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i
+                                class="fa-solid fa-box-archive"></i> 柏宝库</legend>
                         <div class="flex-container flexFlowColumn" style="gap: 5px;">
-                            <div style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px 8px; margin-bottom: 4px;">
-                                <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: start;">
+                            <div
+                                style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px 8px; margin-bottom: 4px;">
+                                <div
+                                    style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 5em); gap: 8px; align-items: start;">
                                     <div class="flex-container flexFlowColumn" style="gap: 4px; min-width: 0;">
                                         <span style="font-weight: bold; opacity: 0.85;">连接状态</span>
-                                        <div class="flex-container flexFlowColumn" style="gap: 2px; font-size: 0.9em; opacity: 0.9;">
+                                        <div class="flex-container flexFlowColumn"
+                                            style="gap: 2px; font-size: 0.9em; opacity: 0.9;">
                                             <div>服务：<span id="bai_bai_toolkit_baibaoku_server_status">检测中</span></div>
                                             <div>数据库：<span id="bai_bai_toolkit_baibaoku_driver_status">检测中</span></div>
-                                            <div>Early Bridge：<span id="bai_bai_toolkit_baibaoku_bridge_status">检测中</span></div>
+                                            <div>Early Bridge：<span
+                                                    id="bai_bai_toolkit_baibaoku_bridge_status">检测中</span></div>
                                         </div>
                                     </div>
-                                    <div class="flex-container flexFlowColumn alignItemCenter" style="gap: 5px; justify-self: end;">
-                                        <div id="bai_bai_toolkit_baibaoku_refresh_status" class="menu_button menu_button_icon" title="重新检测柏宝库连接状态">
+                                    <div class="flex-container flexFlowColumn alignItemCenter"
+                                        style="gap: 5px; justify-self: end;">
+                                        <div id="bai_bai_toolkit_baibaoku_refresh_status"
+                                            class="menu_button menu_button_icon" title="重新检测柏宝库连接状态">
                                             <i class="fa-solid fa-rotate"></i>
                                             <span>刷新</span>
                                         </div>
-                                        <div id="bai_bai_toolkit_baibaoku_install_help" class="menu_button menu_button_icon" title="说明">
+                                        <div id="bai_bai_toolkit_baibaoku_install_help"
+                                            class="menu_button menu_button_icon" title="说明">
                                             <i class="fa-solid fa-circle-question"></i>
                                             <span>说明</span>
                                         </div>
@@ -252,27 +294,32 @@
                             </div>
                             <label class="checkbox_label" for="bai_bai_toolkit_baibaoku_settings_acceleration_enabled"
                                 title="通过柏宝库 Early Bridge 接管 /api/settings/get 和 /api/settings/save；关闭后完全走 SillyTavern 原生接口。">
-                                <input id="bai_bai_toolkit_baibaoku_settings_acceleration_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_baibaoku_settings_acceleration_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>Settings get/save 加速</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_extension_manifest_bundle_enabled"
                                 title="加载扩展时，通过柏宝库一次性获取扩展清单和 manifest 缓存，减少大量 /scripts/extensions/.../manifest.json 请求；关闭后完全走 SillyTavern 原生请求。">
-                                <input id="bai_bai_toolkit_extension_manifest_bundle_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_extension_manifest_bundle_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>扩展 Manifest 合并请求</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_fast_character_list_enabled"
                                 title="加载角色列表时，将 SillyTavern 原本的 /api/characters/all 空请求替换为柏宝库的快速角色列表接口；接口不可用时自动退回原请求。">
-                                <input id="bai_bai_toolkit_fast_character_list_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_fast_character_list_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>角色列表请求加速</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_recent_chat_list_acceleration_enabled"
                                 title="加载主页最近聊天时，将 /api/chats/recent 替换为柏宝库的快速最近聊天接口；接口不可用时自动退回原请求。">
-                                <input id="bai_bai_toolkit_recent_chat_list_acceleration_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_recent_chat_list_acceleration_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>最近聊天请求加速</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_progressive_chat_loading_enabled"
                                 title="进入大聊天时，先通过柏宝库返回尾部楼层并锁定发送/编辑/保存，后台补全完整聊天后再解锁；接口不可用时自动退回原生加载。">
-                                <input id="bai_bai_toolkit_progressive_chat_loading_enabled" type="checkbox" class="checkbox" disabled>
+                                <input id="bai_bai_toolkit_progressive_chat_loading_enabled" type="checkbox"
+                                    class="checkbox" disabled>
                                 <span>长聊天分批加载</span>
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_save_generate_enabled"
@@ -287,7 +334,8 @@
                             </label>
                             <label class="checkbox_label" for="bai_bai_toolkit_tokenizer_bulk_count_enabled"
                                 title="刷新 Prompt Manager token 统计时使用 BaiBaoKu 批量计数接口，减少切换模型时的 token 计算请求。">
-                                <input id="bai_bai_toolkit_tokenizer_bulk_count_enabled" type="checkbox" class="checkbox">
+                                <input id="bai_bai_toolkit_tokenizer_bulk_count_enabled" type="checkbox"
+                                    class="checkbox">
                                 <span>Tokenizer 计数请求批量加速</span>
                             </label>
                         </div>
@@ -295,57 +343,73 @@
                 </div>
 
                 <!-- 附加功能 (Features) - 默认隐藏 -->
-                <div id="bai_bai_toolkit_tab_features" class="bai_bai_toolkit_tab_content" style="display: none; padding-top: 5px;">
+                <div id="bai_bai_toolkit_tab_features" class="bai_bai_toolkit_tab_content"
+                    style="display: none; padding-top: 5px;">
                     <div class="flex-container flexFlowColumn" style="gap: 5px;">
-                        <fieldset style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
-                            <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-volume-high"></i> 消息完成提示音</legend>
+                        <fieldset
+                            style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 8px; margin-bottom: 10px;">
+                            <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i
+                                    class="fa-solid fa-volume-high"></i> 消息完成提示音</legend>
                             <div class="flex-container flexFlowColumn" style="gap: 8px;">
-                                <div class="flex-container justifySpaceBetween alignItemCenter" style="gap: 8px; align-items: center;">
+                                <div class="flex-container justifySpaceBetween alignItemCenter"
+                                    style="gap: 8px; align-items: center;">
                                     <label class="checkbox_label" for="bai_bai_toolkit_message_completion_sound_enabled"
-                                        style="align-items: center;"
-                                        title="生成完成后播放提示音；手动停止生成时不会播放。">
+                                        style="align-items: center;" title="生成完成后播放提示音；手动停止生成时不会播放。">
                                         <input id="bai_bai_toolkit_message_completion_sound_enabled" type="checkbox"
                                             class="checkbox">
                                         <span>生成完成后播放提示音</span>
                                     </label>
-                                    <div id="bai_bai_toolkit_message_completion_sound_preview" class="menu_button menu_button_icon"
-                                        style="align-items: center;"
+                                    <div id="bai_bai_toolkit_message_completion_sound_preview"
+                                        class="menu_button menu_button_icon" style="align-items: center;"
                                         title="试听当前提示音">
                                         <i class="fa-solid fa-play"></i>
                                         <span>试听</span>
                                     </div>
                                 </div>
 
-                                <label class="flex-container alignItemCenter flexGap5" for="bai_bai_toolkit_message_completion_sound_source" style="align-items: center;">
+                                <label class="flex-container alignItemCenter flexGap5"
+                                    for="bai_bai_toolkit_message_completion_sound_source" style="align-items: center;">
                                     <span style="min-width: 72px;">音频来源</span>
-                                    <select id="bai_bai_toolkit_message_completion_sound_source" class="text_pole" style="flex: 1;">
+                                    <select id="bai_bai_toolkit_message_completion_sound_source" class="text_pole"
+                                        style="flex: 1;">
                                         <option value="builtin">内置音频</option>
                                         <option value="url">音频 URL</option>
                                         <option value="local">本地文件</option>
                                     </select>
                                 </label>
 
-                                <div id="bai_bai_toolkit_message_completion_sound_builtin_row" class="flex-container alignItemCenter flexGap5" style="align-items: center;">
-                                    <label for="bai_bai_toolkit_message_completion_sound_builtin_id" style="min-width: 72px; align-items: center;">内置音频</label>
-                                    <select id="bai_bai_toolkit_message_completion_sound_builtin_id" class="text_pole" style="flex: 1;"></select>
+                                <div id="bai_bai_toolkit_message_completion_sound_builtin_row"
+                                    class="flex-container alignItemCenter flexGap5" style="align-items: center;">
+                                    <label for="bai_bai_toolkit_message_completion_sound_builtin_id"
+                                        style="min-width: 72px; align-items: center;">内置音频</label>
+                                    <select id="bai_bai_toolkit_message_completion_sound_builtin_id" class="text_pole"
+                                        style="flex: 1;"></select>
                                 </div>
 
-                                <div id="bai_bai_toolkit_message_completion_sound_url_row" class="flex-container alignItemCenter flexGap5" style="display: none; align-items: center;">
-                                    <label for="bai_bai_toolkit_message_completion_sound_url" style="min-width: 72px; align-items: center;">音频 URL</label>
-                                    <input id="bai_bai_toolkit_message_completion_sound_url" class="text_pole" type="url"
-                                        placeholder="https://example.com/sound.mp3" style="flex: 1;">
+                                <div id="bai_bai_toolkit_message_completion_sound_url_row"
+                                    class="flex-container alignItemCenter flexGap5"
+                                    style="display: none; align-items: center;">
+                                    <label for="bai_bai_toolkit_message_completion_sound_url"
+                                        style="min-width: 72px; align-items: center;">音频 URL</label>
+                                    <input id="bai_bai_toolkit_message_completion_sound_url" class="text_pole"
+                                        type="url" placeholder="https://example.com/sound.mp3" style="flex: 1;">
                                 </div>
 
-                                <div id="bai_bai_toolkit_message_completion_sound_local_row" class="flex-container flexFlowColumn" style="display: none; gap: 5px;">
+                                <div id="bai_bai_toolkit_message_completion_sound_local_row"
+                                    class="flex-container flexFlowColumn" style="display: none; gap: 5px;">
                                     <div class="flex-container alignItemCenter flexGap5" style="align-items: center;">
-                                        <label for="bai_bai_toolkit_message_completion_sound_local_file" style="min-width: 72px; align-items: center;">本地文件</label>
-                                        <input id="bai_bai_toolkit_message_completion_sound_local_file" type="file" accept="audio/*" style="flex: 1;">
+                                        <label for="bai_bai_toolkit_message_completion_sound_local_file"
+                                            style="min-width: 72px; align-items: center;">本地文件</label>
+                                        <input id="bai_bai_toolkit_message_completion_sound_local_file" type="file"
+                                            accept="audio/*" style="flex: 1;">
                                     </div>
-                                    <div class="flex-container alignItemCenter flexGap5" style="font-size: 0.9em; opacity: 0.85; align-items: center;">
+                                    <div class="flex-container alignItemCenter flexGap5"
+                                        style="font-size: 0.9em; opacity: 0.85; align-items: center;">
                                         <span style="min-width: 72px;">当前文件</span>
-                                        <span id="bai_bai_toolkit_message_completion_sound_local_name" style="flex: 1;">未上传</span>
-                                        <div id="bai_bai_toolkit_message_completion_sound_local_clear" class="menu_button menu_button_icon"
-                                            style="align-items: center;"
+                                        <span id="bai_bai_toolkit_message_completion_sound_local_name"
+                                            style="flex: 1;">未上传</span>
+                                        <div id="bai_bai_toolkit_message_completion_sound_local_clear"
+                                            class="menu_button menu_button_icon" style="align-items: center;"
                                             title="清除当前本地提示音">
                                             <i class="fa-solid fa-trash"></i>
                                             <span>清除</span>
@@ -353,13 +417,17 @@
                                     </div>
                                 </div>
 
-                                <label class="flex-container alignItemCenter flexGap5" for="bai_bai_toolkit_message_completion_sound_volume" style="align-items: center;">
+                                <label class="flex-container alignItemCenter flexGap5"
+                                    for="bai_bai_toolkit_message_completion_sound_volume" style="align-items: center;">
                                     <span style="min-width: 72px;">音量</span>
-                                    <input id="bai_bai_toolkit_message_completion_sound_volume" type="range" min="0" max="1" step="0.05" style="flex: 1;">
-                                    <span id="bai_bai_toolkit_message_completion_sound_volume_value" style="width: 42px; text-align: right;"></span>
+                                    <input id="bai_bai_toolkit_message_completion_sound_volume" type="range" min="0"
+                                        max="1" step="0.05" style="flex: 1;">
+                                    <span id="bai_bai_toolkit_message_completion_sound_volume_value"
+                                        style="width: 42px; text-align: right;"></span>
                                 </label>
 
-                                <small id="bai_bai_toolkit_message_completion_sound_status" style="opacity: 0.7;"></small>
+                                <small id="bai_bai_toolkit_message_completion_sound_status"
+                                    style="opacity: 0.7;"></small>
                             </div>
                         </fieldset>
                         <label class="checkbox_label" for="bai_bai_toolkit_update_prompt_on_available_enabled"
