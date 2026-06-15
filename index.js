@@ -2908,6 +2908,12 @@ async function renderSettingsPanel() {
 }
 
 function initializeBaibaokuPanel(container) {
+    container.find('#bai_bai_toolkit_baibaoku_install_help')
+        .off('click.baiBaiToolkitBaibaokuInstallHelp')
+        .on('click.baiBaiToolkitBaibaokuInstallHelp', () => {
+            showBaibaokuInstallHelpPrompt();
+        });
+
     container.find('#bai_bai_toolkit_baibaoku_refresh_status')
         .off('click.baiBaiToolkitBaibaokuStatus')
         .on('click.baiBaiToolkitBaibaokuStatus', () => {
@@ -2979,7 +2985,7 @@ function applyCachedBaibaokuPanelStatus(container, cache) {
     }
 
     if (cache.offline) {
-        updateBaibaokuStatusText(serverStatus, '未连接', false);
+        updateBaibaokuStatusText(serverStatus, '未安装', false);
         updateBaibaokuStatusText(driverStatus, '未知', false);
         return true;
     }
@@ -3167,7 +3173,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
         }
     } catch {
         markSaveGenerateBackendAvailable(globalThis[SAVE_GENERATE_FETCH_KEY], false);
-        updateBaibaokuStatusText(serverStatus, '未连接', false);
+        updateBaibaokuStatusText(serverStatus, '未安装', false);
         updateBaibaokuStatusText(driverStatus, '未知', false);
         applyPresetAutoBackupToggleAvailability(container, null);
     }
@@ -3232,6 +3238,14 @@ async function maybeShowBaibaokuBackendUpdatePrompt(status) {
     await extensionState.baibaokuBackendUpdatePromptPromise;
 }
 
+function showBaibaokuInstallHelpPrompt() {
+    callGenericPopup('请看帖子标注内容', POPUP_TYPE.TEXT, '', {
+        okButton: '知道了',
+    }).catch(error => {
+        console.debug(`${LOG_PREFIX} Failed to show BaiBaoKu install help prompt`, error);
+    });
+}
+
 async function fetchBaibaokuFastConfig() {
     const response = await fetch(BAIBAOKU_FAST_CONFIG_URL, {
         method: 'GET',
@@ -3269,11 +3283,21 @@ async function saveBaibaokuFastConfig(config) {
 
 function updateBaibaokuStatusText(element, text, ok) {
     element.text(text);
-    element.css('color', ok === null
+    const color = ok === null
         ? ''
         : ok
             ? 'var(--SmartThemeQuoteColor)'
-            : 'var(--SmartThemeEmColor)');
+            : '#ff4d4f';
+    element.each((_, node) => {
+        if (!node?.style) {
+            return;
+        }
+        if (color) {
+            node.style.setProperty('color', color, 'important');
+        } else {
+            node.style.removeProperty('color');
+        }
+    });
 }
 
 async function initializeUpdateUI(container) {

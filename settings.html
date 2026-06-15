@@ -218,17 +218,25 @@
                         <legend style="font-size: 0.9em; font-weight: bold; opacity: 0.8;"><i class="fa-solid fa-box-archive"></i> 柏宝库</legend>
                         <div class="flex-container flexFlowColumn" style="gap: 5px;">
                             <div style="border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px 8px; margin-bottom: 4px;">
-                                <div class="flex-container justifySpaceBetween alignItemCenter" style="gap: 8px; margin-bottom: 4px;">
-                                    <span style="font-weight: bold; opacity: 0.85;">连接状态</span>
-                                    <div id="bai_bai_toolkit_baibaoku_refresh_status" class="menu_button menu_button_icon" title="重新检测柏宝库连接状态">
-                                        <i class="fa-solid fa-rotate"></i>
-                                        <span>刷新</span>
+                                <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: start;">
+                                    <div class="flex-container flexFlowColumn" style="gap: 4px; min-width: 0;">
+                                        <span style="font-weight: bold; opacity: 0.85;">连接状态</span>
+                                        <div class="flex-container flexFlowColumn" style="gap: 2px; font-size: 0.9em; opacity: 0.9;">
+                                            <div>服务：<span id="bai_bai_toolkit_baibaoku_server_status">检测中</span></div>
+                                            <div>数据库：<span id="bai_bai_toolkit_baibaoku_driver_status">检测中</span></div>
+                                            <div>Early Bridge：<span id="bai_bai_toolkit_baibaoku_bridge_status">检测中</span></div>
+                                        </div>
                                     </div>
-                                </div>
-                                <div class="flex-container flexFlowColumn" style="gap: 2px; font-size: 0.9em; opacity: 0.9;">
-                                    <div>服务：<span id="bai_bai_toolkit_baibaoku_server_status">检测中</span></div>
-                                    <div>数据库：<span id="bai_bai_toolkit_baibaoku_driver_status">检测中</span></div>
-                                    <div>Early Bridge：<span id="bai_bai_toolkit_baibaoku_bridge_status">检测中</span></div>
+                                    <div class="flex-container flexFlowColumn alignItemCenter" style="gap: 5px; justify-self: end;">
+                                        <div id="bai_bai_toolkit_baibaoku_refresh_status" class="menu_button menu_button_icon" title="重新检测柏宝库连接状态">
+                                            <i class="fa-solid fa-rotate"></i>
+                                            <span>刷新</span>
+                                        </div>
+                                        <div id="bai_bai_toolkit_baibaoku_install_help" class="menu_button menu_button_icon" title="说明">
+                                            <i class="fa-solid fa-circle-question"></i>
+                                            <span>说明</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <label class="checkbox_label" for="bai_bai_toolkit_baibaoku_settings_acceleration_enabled"
