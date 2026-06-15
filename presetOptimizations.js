@@ -3980,7 +3980,7 @@ function syncPresetVuePromptListManagerState() {
     repairPresetPromptOrderDuplicatesIfNeeded();
     repairPresetPromptGroupStateIfNeeded();
     syncCurrentPresetPromptGroupStateToPresetExtensionField({ persist: false });
-    manager.state.globalLibrary = buildPresetVueGlobalLibraryItem();
+    syncPresetVueGlobalLibraryModelState(manager.state);
     manager.state.items = buildPresetVuePromptListItems();
     syncPresetVuePromptGroupBodyMountState(manager.state);
     return true;
@@ -4220,21 +4220,50 @@ function repairPresetPromptGroupStateIfNeeded() {
 
 function buildPresetVueGlobalLibraryItem() {
     const manager = getPresetVuePromptListManagerState();
-    const globalLibraryChildren = normalizePresetGlobalPromptLibraryItems(manager.globalLibraryItems)
-        .map(item => ({
-            ...item,
-            type: 'global-library-prompt',
-        }));
 
     return {
         id: PRESET_VUE_GLOBAL_LIBRARY_ENTRY_ID,
         type: 'global-library',
-        count: globalLibraryChildren.length,
+        count: getPresetVueGlobalLibraryChildren(manager).length,
         collapsed: Boolean(manager.globalLibraryCollapsed),
         loading: Boolean(manager.globalLibraryLoading),
         error: manager.globalLibraryError ? String(manager.globalLibraryError) : '',
-        children: globalLibraryChildren,
+        children: getPresetVueGlobalLibraryChildren(manager),
     };
+}
+
+function getPresetVueGlobalLibraryChildren(manager = getPresetVuePromptListManagerState()) {
+    return normalizePresetGlobalPromptLibraryItems(manager.globalLibraryItems)
+        .map(item => ({
+            ...item,
+            type: 'global-library-prompt',
+        }));
+}
+
+function syncPresetVueGlobalLibraryModelState(model) {
+    if (!model) {
+        return;
+    }
+
+    const nextLibrary = buildPresetVueGlobalLibraryItem();
+
+    if (!model.globalLibrary) {
+        model.globalLibrary = nextLibrary;
+        return;
+    }
+
+    const children = Array.isArray(model.globalLibrary.children)
+        ? model.globalLibrary.children
+        : [];
+
+    children.splice(0, children.length, ...nextLibrary.children);
+    model.globalLibrary.id = nextLibrary.id;
+    model.globalLibrary.type = nextLibrary.type;
+    model.globalLibrary.count = nextLibrary.count;
+    model.globalLibrary.collapsed = nextLibrary.collapsed;
+    model.globalLibrary.loading = nextLibrary.loading;
+    model.globalLibrary.error = nextLibrary.error;
+    model.globalLibrary.children = children;
 }
 
 function buildPresetVuePromptListItems() {
@@ -7167,7 +7196,7 @@ function setPresetGlobalPromptLibraryRuntimeState(library, { loaded = true, load
     return normalized;
 }
 
-async function loadPresetGlobalPromptLibrary({ force = false } = {}) {
+async function loadPresetGlobalPromptLibrary({ force = false, showLoading = true } = {}) {
     const manager = getPresetVuePromptListManagerState();
 
     if (!force && manager.globalLibraryLoaded) {
@@ -7178,9 +7207,12 @@ async function loadPresetGlobalPromptLibrary({ force = false } = {}) {
         return manager.globalLibraryLoadPromise;
     }
 
-    manager.globalLibraryLoading = true;
     manager.globalLibraryError = null;
-    syncPresetVuePromptListManagerState();
+
+    if (showLoading) {
+        manager.globalLibraryLoading = true;
+        syncPresetVuePromptListManagerState();
+    }
 
     manager.globalLibraryLoadPromise = (async () => {
         try {
@@ -7208,7 +7240,7 @@ async function updatePresetGlobalPromptLibrary(mutator) {
     const manager = getPresetVuePromptListManagerState();
     const previousSave = manager.globalLibrarySavePromise || Promise.resolve();
     const run = async () => {
-        const currentLibrary = await loadPresetGlobalPromptLibrary({ force: true });
+        const currentLibrary = await loadPresetGlobalPromptLibrary({ force: true, showLoading: false });
         const draft = normalizePresetGlobalPromptLibrary(currentLibrary);
         const nextLibrary = normalizePresetGlobalPromptLibrary(await mutator(draft) || draft);
         const database = await getPresetGlobalPromptLibraryDatabase();
@@ -7732,6 +7764,13 @@ function applyPresetPromptGroupExtensionPayloadToMemory(payload) {
             ? oai_settings.extensions
             : {};
         setObjectPath(oai_settings.extensions, PRESET_GROUP_EXTENSION_PATH, payload.groupState);
+
+        if (promptManager?.serviceSettings && typeof promptManager.serviceSettings === 'object') {
+            promptManager.serviceSettings.extensions = promptManager.serviceSettings.extensions && typeof promptManager.serviceSettings.extensions === 'object'
+                ? promptManager.serviceSettings.extensions
+                : {};
+            setObjectPath(promptManager.serviceSettings.extensions, PRESET_GROUP_EXTENSION_PATH, payload.groupState);
+        }
     }
 
     const preset = payload.presetManager?.getCompletionPresetByName?.(payload.presetName);
@@ -10594,10 +10633,10 @@ async function insertPresetGlobalPromptLibraryItemToCurrentPreset(itemId) {
 
     promptManager.log?.(`Added global library prompt: ${itemId} -> ${promptId}.`);
     refreshPresetPromptListAfterCopy();
-    markOpenAiPresetSavePending();
 
     try {
-        await saveOpenAiPresetAfterPromptEdit();
+        markPresetPromptServiceSettingsSavePending();
+        await flushPendingPresetPromptChanges({ includeOpenAiPresetSaves: false });
         toastr.success(t`已添加到当前预设。`);
         refreshPromptManagerTokensDebounced();
         return true;
