@@ -3074,8 +3074,6 @@ function unmountPresetVuePromptListApp(manager = getPresetVuePromptListManagerSt
     manager.lastGroupHeaderGestureCanceledAt = 0;
     manager.lastDragStartedAt = 0;
     manager.lastDragEndedAt = 0;
-    manager.lastPromptGroupRepairPresetName = null;
-    manager.lastPromptGroupRepairPromptIds = null;
 }
 
 function getPresetVuePromptListManagerState() {
@@ -3127,8 +3125,6 @@ function getPresetVuePromptListManagerState() {
             lastGroupHeaderGestureCanceledAt: 0,
             lastDragStartedAt: 0,
             lastDragEndedAt: 0,
-            lastPromptGroupRepairPresetName: null,
-            lastPromptGroupRepairPromptIds: null,
             enabled: false,
         };
     }
@@ -3599,24 +3595,17 @@ function repairPresetPromptGroupStateIfNeeded() {
         return false;
     }
 
-    const manager = getPresetVuePromptListManagerState();
-    const presetName = getPresetPromptGroupRuntimePresetName();
     const groupState = getPresetPromptGroupState();
-    const promptIds = (promptManager.getPromptOrderForCharacter(promptManager.activeCharacter) ?? [])
-        .map(entry => entry?.identifier)
-        .filter(Boolean);
-    const validPromptIds = new Set(promptIds);
-    const previousPromptIds = manager.lastPromptGroupRepairPresetName === presetName
-        && Array.isArray(manager.lastPromptGroupRepairPromptIds)
-        ? manager.lastPromptGroupRepairPromptIds
-        : null;
+    const validPromptIds = new Set(
+        (promptManager.getPromptOrderForCharacter(promptManager.activeCharacter) ?? [])
+            .map(entry => entry?.identifier)
+            .filter(Boolean),
+    );
     const before = JSON.stringify({
         groups: groupState.groups,
         prompts: groupState.prompts,
     });
 
-    normalizePresetPromptGroupState(groupState, validPromptIds);
-    assignNewPresetPromptsToNeighborGroup(groupState, promptIds, previousPromptIds);
     normalizePresetPromptGroupState(groupState, validPromptIds);
 
     const after = JSON.stringify({
@@ -3624,72 +3613,12 @@ function repairPresetPromptGroupStateIfNeeded() {
         prompts: groupState.prompts,
     });
 
-    manager.lastPromptGroupRepairPresetName = presetName;
-    manager.lastPromptGroupRepairPromptIds = promptIds;
-
     if (before === after) {
         return false;
     }
 
     savePresetPromptGroupSettings();
     return true;
-}
-
-function assignNewPresetPromptsToNeighborGroup(groupState, promptIds, previousPromptIds) {
-    if (!Array.isArray(previousPromptIds) || !Array.isArray(promptIds) || promptIds.length === 0) {
-        return false;
-    }
-
-    const previousPromptIdSet = new Set(previousPromptIds.filter(Boolean));
-    const validGroupIds = new Set((groupState.groups ?? []).map(group => group?.id).filter(Boolean));
-
-    if (previousPromptIdSet.size === 0 || validGroupIds.size === 0) {
-        return false;
-    }
-
-    let changed = false;
-    let index = 0;
-
-    while (index < promptIds.length) {
-        const promptId = promptIds[index];
-
-        if (!promptId || previousPromptIdSet.has(promptId) || groupState.prompts?.[promptId]?.groupId) {
-            index += 1;
-            continue;
-        }
-
-        const runStart = index;
-
-        while (
-            index < promptIds.length
-            && promptIds[index]
-            && !previousPromptIdSet.has(promptIds[index])
-            && !groupState.prompts?.[promptIds[index]]?.groupId
-        ) {
-            index += 1;
-        }
-
-        const beforePromptId = promptIds[runStart - 1];
-        const afterPromptId = promptIds[index];
-
-        if (!beforePromptId || !afterPromptId) {
-            continue;
-        }
-
-        const beforeGroupId = groupState.prompts?.[beforePromptId]?.groupId;
-        const afterGroupId = groupState.prompts?.[afterPromptId]?.groupId;
-
-        if (!beforeGroupId || beforeGroupId !== afterGroupId || !validGroupIds.has(beforeGroupId)) {
-            continue;
-        }
-
-        for (let promptIndex = runStart; promptIndex < index; promptIndex += 1) {
-            groupState.prompts[promptIds[promptIndex]] = { groupId: beforeGroupId };
-            changed = true;
-        }
-    }
-
-    return changed;
 }
 
 function buildPresetVuePromptListItems() {
@@ -8869,10 +8798,6 @@ function resetPresetPromptGroupRuntimeState(presetName = null) {
 
     delete extensionState.presetPromptGroupRuntimePresetName;
     delete extensionState.presetPromptGroupRuntimeState;
-
-    const manager = getPresetVuePromptListManagerState();
-    manager.lastPromptGroupRepairPresetName = null;
-    manager.lastPromptGroupRepairPromptIds = null;
 }
 
 function applyPresetModelChangeTokenRefreshOptimization() {
