@@ -10597,6 +10597,8 @@ function applyWorldInfoMobileHeaderLayout(entry) {
     const orderBlock = controls?.querySelector('input[name="order"]')?.closest('.world_entry_form_control');
     const probabilityBlock = controls?.querySelector(':scope > .probabilityContainer');
     const entryStateSelector = titleStatus?.querySelector('select[name="entryStateSelector"]');
+    const positionLabel = positionBlock?.querySelector(':scope > label');
+    const depthLabel = depthBlock?.querySelector(':scope > label');
 
     if (!(header instanceof HTMLElement)
         || !(thinControls instanceof HTMLElement)
@@ -10607,7 +10609,9 @@ function applyWorldInfoMobileHeaderLayout(entry) {
         || !(positionBlock instanceof HTMLElement)
         || !(depthBlock instanceof HTMLElement)
         || !(orderBlock instanceof HTMLElement)
-        || !(probabilityBlock instanceof HTMLElement)) {
+        || !(probabilityBlock instanceof HTMLElement)
+        || !(positionLabel instanceof HTMLElement)
+        || !(depthLabel instanceof HTMLElement)) {
         return;
     }
 
@@ -10652,6 +10656,17 @@ function applyWorldInfoMobileHeaderLayout(entry) {
         menuCell.append(dragHandle);
     }
 
+    const positionLabelCell = document.createElement('div');
+    positionLabelCell.className = 'bai-bai-wi-mobile-position-label-cell';
+    positionLabelCell.append(positionLabel);
+
+    const depthLabelCell = document.createElement('div');
+    depthLabelCell.className = 'bai-bai-wi-mobile-depth-label-cell';
+    depthLabelCell.append(depthLabel);
+
+    const labelSpacerCell = document.createElement('div');
+    labelSpacerCell.className = 'bai-bai-wi-mobile-label-spacer-cell';
+
     const positionCell = document.createElement('div');
     positionCell.className = 'bai-bai-wi-mobile-position-cell';
     positionCell.append(positionBlock);
@@ -10664,7 +10679,11 @@ function applyWorldInfoMobileHeaderLayout(entry) {
     enabledCell.className = 'bai-bai-wi-mobile-enabled-cell';
     enabledCell.append(killSwitch);
 
-    grid.append(titleCell, stateCell, menuCell, positionCell, depthCell, enabledCell);
+    grid.append(
+        titleCell, stateCell, menuCell,
+        positionLabelCell, depthLabelCell, labelSpacerCell,
+        positionCell, depthCell, enabledCell,
+    );
 
     const footer = document.createElement('div');
     footer.className = 'bai-bai-wi-mobile-footer';
@@ -10698,6 +10717,8 @@ function applyWorldInfoMobileHeaderLayout(entry) {
         body,
         titleStatus,
         entryStateSelector,
+        positionLabel,
+        depthLabel,
         controls,
         toggle,
         killSwitch,
@@ -10737,6 +10758,14 @@ function restoreWorldInfoMobileHeaderLayout(entry) {
 
     if (state.titleStatus instanceof HTMLElement && state.entryStateSelector instanceof HTMLElement) {
         state.titleStatus.append(state.entryStateSelector);
+    }
+
+    if (state.positionBlock instanceof HTMLElement && state.positionLabel instanceof HTMLElement) {
+        state.positionBlock.prepend(state.positionLabel);
+    }
+
+    if (state.depthBlock instanceof HTMLElement && state.depthLabel instanceof HTMLElement) {
+        state.depthBlock.prepend(state.depthLabel);
     }
 
     if (state.body instanceof HTMLElement && state.titleStatus instanceof HTMLElement && state.controls instanceof HTMLElement) {
@@ -10785,20 +10814,39 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         padding: 0;
     }
 
+    #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] {
+        margin-top: 15px;
+    }
+
+    #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] > .world_entry_form.wi-card-entry {
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+
     #world_popup_entries_list .bai-bai-wi-mobile-header {
         width: 100%;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 0;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-header-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 3em 25px;
-        grid-template-rows: auto auto;
-        gap: 18px 8px;
+        grid-template-columns: minmax(0, 1fr) 46px 20px;
+        grid-template-rows: auto auto auto;
+        column-gap: 8px;
+        row-gap: 0;
         align-items: center;
         width: 100%;
+    }
+
+    #world_popup_entries_list .bai-bai-wi-mobile-header textarea,
+    #world_popup_entries_list .bai-bai-wi-mobile-header select,
+    #world_popup_entries_list .bai-bai-wi-mobile-header input,
+    #world_popup_entries_list .bai-bai-wi-mobile-header .menu_button,
+    #world_popup_entries_list .bai-bai-wi-mobile-header .inline-drawer-toggle {
+        margin: 0 !important;
+        box-sizing: border-box;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-title-cell,
@@ -10822,12 +10870,19 @@ function installWorldInfoMobileHeaderLayoutStyle() {
 
     #world_popup_entries_list .bai-bai-wi-mobile-title-cell textarea[name="comment"] {
         font-size: 14px;
+        line-height: 20px !important;
+        margin: 0 !important;
+        padding-top: 6px !important;
+        padding-bottom: 6px !important;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-state-cell select[name="entryStateSelector"] {
         font-size: 0.88em;
         margin: 0 !important;
         padding: 0 !important;
+        text-align: left;
+        text-align-last: left;
+        text-indent: 7px;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-position-cell select[name="position"],
@@ -10836,6 +10891,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         min-height: 28px !important;
         box-sizing: border-box;
         padding: 2px 6px !important;
+        font-size: 12px !important;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-title-cell textarea[name="comment"],
@@ -10846,19 +10902,26 @@ function installWorldInfoMobileHeaderLayoutStyle() {
 
     #world_popup_entries_list .bai-bai-wi-mobile-state-cell select[name="entryStateSelector"],
     #world_popup_entries_list .bai-bai-wi-mobile-depth-cell input[name="depth"] {
-        width: 3em !important;
-        min-width: 3em !important;
-        max-width: 3em !important;
+        width: 46px !important;
+        min-width: 46px !important;
+        max-width: 46px !important;
     }
 
-    #world_popup_entries_list .bai-bai-wi-mobile-position-cell label,
-    #world_popup_entries_list .bai-bai-wi-mobile-depth-cell label {
-        position: absolute;
-        left: 0;
-        top: -15px;
-        font-size: 0.85em;
-        line-height: 1.1;
+    #world_popup_entries_list .bai-bai-wi-mobile-position-label-cell,
+    #world_popup_entries_list .bai-bai-wi-mobile-depth-label-cell {
+        font-size: 11px;
+        line-height: 11px;
+        opacity: 0.72;
+        margin: 10px 0 3px 0;
+        min-height: 11px;
+    }
+
+    #world_popup_entries_list .bai-bai-wi-mobile-position-label-cell label,
+    #world_popup_entries_list .bai-bai-wi-mobile-depth-label-cell label {
+        display: block;
         margin: 0;
+        padding: 0;
+        line-height: 11px;
         pointer-events: none;
     }
 
@@ -10867,7 +10930,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         display: flex;
         flex-direction: column;
         justify-content: center;
-        position: relative;
+        margin-top: 0;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-menu-cell,
@@ -10884,7 +10947,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-menu-cell .drag-handle {
-        min-width: 25px;
+        min-width: 20px;
         text-align: center;
         cursor: grab;
     }
@@ -10894,6 +10957,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         align-items: end;
         gap: 8px;
         width: 100%;
+        margin-top: 10px;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-number-group,
@@ -10905,7 +10969,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-action-group {
-        padding-top: calc(0.85em * 1.1 + 2px);
+        padding-top: 14px;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-number-group input[name="order"],
@@ -10914,14 +10978,18 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         min-height: 28px !important;
         box-sizing: border-box;
         padding: 2px 6px !important;
+        font-size: 12px !important;
         width: 66px !important;
         max-width: 66px !important;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-number-group label {
-        font-size: 0.85em;
-        line-height: 1.1;
-        margin: 0 0 2px 0;
+        font-size: 11px;
+        line-height: 11px;
+        opacity: 0.72;
+        display: block;
+        margin: 0 0 3px 0;
+        padding: 0;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-action-group .menu_button {
@@ -10940,6 +11008,8 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         justify-content: center;
         padding: 0 !important;
         margin: 0 !important;
+        line-height: 1 !important;
+        overflow: hidden;
     }
 
     #world_popup_entries_list .bai-bai-wi-mobile-expand-slot {
@@ -10966,7 +11036,9 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         justify-content: center;
         padding: 0 !important;
         margin: 0 !important;
-        font-size: 1.5em;
+        font-size: 21px;
+        line-height: 1 !important;
+        overflow: hidden;
     }
 
     #world_popup_entries_list .world_entry_edit[data-bai-bai-world-info-mobile-expanded-layout="true"] {
