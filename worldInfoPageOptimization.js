@@ -266,6 +266,8 @@ const WORLD_INFO_GLOBAL_SELECTOR_DATASET_KEY = 'baiBaiToolkitWorldInfoGlobalSele
 const WORLD_INFO_GLOBAL_SELECTOR_OPTION_ORDER_DATASET_KEY = 'baiBaiToolkitWorldInfoGlobalSelectorOrder';
 const WORLD_INFO_GLOBAL_SELECTOR_DROPDOWN_CLASS = 'bai-bai-wi-global-selector-dropdown';
 const WORLD_INFO_GLOBAL_SELECTOR_HOST_CLASS = 'bai-bai-wi-global-selector';
+const WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY = 'baiBaiToolkitWorldInfoGlobalSelectorSearchMobileSuppressed';
+const WORLD_INFO_GLOBAL_SELECTOR_TOUCH_SELECT_THRESHOLD_PX = 16;
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
 const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer';
 const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
@@ -630,6 +632,13 @@ function installWorldInfoGlobalSelectorSyncHandler(state = getWorldInfoVueListOp
             return;
         }
 
+        if (event?.target instanceof HTMLSelectElement
+            && event.target[WORLD_INFO_GLOBAL_SELECTOR_STATE_KEY]?.suppressDropdownRefresh) {
+            refreshWorldInfoGlobalSelectorDisplay(event.target);
+            refreshWorldInfoGlobalSelectorDropdownSelectionState(event.target);
+            return;
+        }
+
         syncWorldInfoGlobalSelectorDisplays(state);
     };
 
@@ -775,6 +784,13 @@ function enhanceWorldInfoGlobalSelector(select, state = getWorldInfoVueListOptim
         selectState.changeHandler = () => {
             ensureWorldInfoGlobalSelectorOptionOrder(select);
             refreshWorldInfoGlobalSelectorDisplay(select);
+            refreshWorldInfoGlobalSelectorDropdownSelectionState(select);
+
+            if (selectState.suppressDropdownRefresh) {
+                selectState.suppressDropdownRefresh = false;
+                return;
+            }
+
             refreshWorldInfoGlobalSelectorDropdown(select);
         };
         select.addEventListener('change', selectState.changeHandler);
@@ -946,9 +962,10 @@ function refreshWorldInfoGlobalSelectorDisplay(select) {
             event.preventDefault();
             event.stopPropagation();
             option.selected = false;
+            selectState.suppressDropdownRefresh = true;
             notifyWorldInfoGlobalSelectorChanged(select);
             refreshWorldInfoGlobalSelectorDisplay(select);
-            refreshWorldInfoGlobalSelectorDropdown(select);
+            refreshWorldInfoGlobalSelectorDropdownSelectionState(select);
         });
 
         chip.append(label, removeButton);
@@ -1005,19 +1022,43 @@ function openWorldInfoGlobalSelectorDropdown(select, state = getWorldInfoVueList
     searchInput.className = 'bai-bai-wi-global-selector-search';
     searchInput.type = 'search';
     searchInput.placeholder = '搜索世界书...';
-    searchBox.append(searchInput);
+    const clearSearchButton = document.createElement('button');
+    clearSearchButton.className = 'bai-bai-wi-global-selector-search-clear';
+    clearSearchButton.type = 'button';
+    clearSearchButton.textContent = '×';
+    clearSearchButton.title = '清空搜索';
+    clearSearchButton.setAttribute('aria-label', '清空搜索');
+    searchBox.append(searchInput, clearSearchButton);
+
+    if (isMobile()) {
+        suppressWorldInfoGlobalSelectorSearchMobileAutoKeyboard(searchInput);
+    }
 
     const optionsContainer = document.createElement('div');
     optionsContainer.className = 'bai-bai-wi-global-selector-options';
     dropdown.append(searchBox, optionsContainer);
 
+    const orderedOptions = getWorldInfoGlobalSelectorOrderedOptions(select);
     const stopDropdownEvent = (event) => event.stopPropagation();
     ['pointerdown', 'mousedown', 'click', 'touchstart', 'touchend'].forEach(eventName => {
         dropdown.addEventListener(eventName, stopDropdownEvent);
     });
 
-    const renderOptions = () => renderWorldInfoGlobalSelectorDropdownOptions(select, optionsContainer, searchInput.value);
+    const renderOptions = () => renderWorldInfoGlobalSelectorDropdownOptions(select, optionsContainer, searchInput.value, orderedOptions);
     searchInput.addEventListener('input', renderOptions);
+    const clearSearch = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const shouldRefocus = searchInput.value !== '' || document.activeElement === searchInput;
+        searchInput.value = '';
+        renderOptions();
+
+        if (shouldRefocus) {
+            focusWorldInfoEditorSelectSearchFieldFromUserInteraction(searchInput, event);
+        }
+    };
+    clearSearchButton.addEventListener('pointerdown', clearSearch);
+    clearSearchButton.addEventListener('click', clearSearch);
     renderOptions();
 
     const rect = displayEl.getBoundingClientRect();
@@ -1065,6 +1106,10 @@ function openWorldInfoGlobalSelectorDropdown(select, state = getWorldInfoVueList
             return;
         }
 
+        if (document.activeElement instanceof Node && dropdown.contains(document.activeElement)) {
+            return;
+        }
+
         closeWorldInfoGlobalSelectorDropdown(state);
     };
 
@@ -1077,6 +1122,7 @@ function openWorldInfoGlobalSelectorDropdown(select, state = getWorldInfoVueList
         displayEl,
         dropdown,
         optionsContainer,
+        orderedOptions,
         searchInput,
         closeHandler,
         keyHandler,
@@ -1124,10 +1170,15 @@ function refreshWorldInfoGlobalSelectorDropdown(select, state = getWorldInfoVueL
         return;
     }
 
-    renderWorldInfoGlobalSelectorDropdownOptions(select, dropdownState.optionsContainer, dropdownState.searchInput?.value ?? '');
+    renderWorldInfoGlobalSelectorDropdownOptions(
+        select,
+        dropdownState.optionsContainer,
+        dropdownState.searchInput?.value ?? '',
+        dropdownState.orderedOptions,
+    );
 }
 
-function renderWorldInfoGlobalSelectorDropdownOptions(select, optionsContainer, searchTerm = '') {
+function renderWorldInfoGlobalSelectorDropdownOptions(select, optionsContainer, searchTerm = '', orderedOptions = null) {
     if (!(select instanceof HTMLSelectElement) || !(optionsContainer instanceof HTMLElement)) {
         return;
     }
@@ -1135,7 +1186,8 @@ function renderWorldInfoGlobalSelectorDropdownOptions(select, optionsContainer, 
     optionsContainer.textContent = '';
 
     const normalizedSearch = String(searchTerm).trim().toLowerCase();
-    const options = getWorldInfoGlobalSelectorSortedOptions(select)
+    const sourceOptions = Array.isArray(orderedOptions) ? orderedOptions : getWorldInfoGlobalSelectorOrderedOptions(select);
+    const options = sourceOptions
         .filter(option => {
             const text = option.textContent?.trim() || option.value;
             return !normalizedSearch || text.toLowerCase().includes(normalizedSearch);
@@ -1149,29 +1201,10 @@ function renderWorldInfoGlobalSelectorDropdownOptions(select, optionsContainer, 
         return;
     }
 
-    let renderedSelectedLabel = false;
-    let renderedOtherLabel = false;
-
     options.forEach(option => {
         const isSelected = isWorldInfoGlobalSelectorOptionSelected(option);
-
-        if (isSelected && !renderedSelectedLabel) {
-            renderedSelectedLabel = true;
-            optionsContainer.append(createWorldInfoGlobalSelectorGroupLabel('已启用'));
-        } else if (!isSelected && renderedSelectedLabel && !renderedOtherLabel) {
-            renderedOtherLabel = true;
-            optionsContainer.append(createWorldInfoGlobalSelectorGroupLabel('其他世界书'));
-        }
-
         optionsContainer.append(createWorldInfoGlobalSelectorOption(select, option, isSelected));
     });
-}
-
-function createWorldInfoGlobalSelectorGroupLabel(text) {
-    const label = document.createElement('div');
-    label.className = 'bai-bai-wi-global-selector-group';
-    label.textContent = text;
-    return label;
 }
 
 function createWorldInfoGlobalSelectorOption(select, option, isSelected) {
@@ -1179,35 +1212,100 @@ function createWorldInfoGlobalSelectorOption(select, option, isSelected) {
     optionEl.className = 'bai-bai-wi-global-selector-option';
     optionEl.dataset.value = option.value;
     optionEl.role = 'option';
+    optionEl.tabIndex = 0;
     optionEl.setAttribute('aria-selected', isSelected ? 'true' : 'false');
     optionEl.classList.toggle('selected', isSelected);
     optionEl.textContent = option.textContent?.trim() || option.value;
+    let pointerStart = null;
 
     const handleSelect = (event) => {
         event.preventDefault();
         event.stopPropagation();
+        const selectState = select?.[WORLD_INFO_GLOBAL_SELECTOR_STATE_KEY];
+
+        if (selectState) {
+            selectState.suppressDropdownRefresh = true;
+        }
+
         option.selected = !option.selected;
+        const nextSelected = isWorldInfoGlobalSelectorOptionSelected(option);
+        optionEl.classList.toggle('selected', nextSelected);
+        optionEl.setAttribute('aria-selected', nextSelected ? 'true' : 'false');
         notifyWorldInfoGlobalSelectorChanged(select);
         refreshWorldInfoGlobalSelectorDisplay(select);
-        refreshWorldInfoGlobalSelectorDropdown(select);
     };
 
-    optionEl.addEventListener('pointerdown', handleSelect);
+    optionEl.addEventListener('pointerdown', event => {
+        pointerStart = {
+            pointerId: event.pointerId,
+            pointerType: event.pointerType,
+            x: event.clientX,
+            y: event.clientY,
+            moved: false,
+        };
+    });
+    optionEl.addEventListener('pointermove', event => {
+        if (!pointerStart || pointerStart.pointerId !== event.pointerId) {
+            return;
+        }
+
+        const distance = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
+
+        if (distance > WORLD_INFO_GLOBAL_SELECTOR_TOUCH_SELECT_THRESHOLD_PX) {
+            pointerStart.moved = true;
+        }
+    });
+    optionEl.addEventListener('pointerup', event => {
+        if (!pointerStart || pointerStart.pointerId !== event.pointerId) {
+            return;
+        }
+
+        const shouldIgnore = pointerStart.moved && pointerStart.pointerType !== 'mouse';
+        pointerStart = null;
+
+        if (shouldIgnore) {
+            return;
+        }
+
+        handleSelect(event);
+    });
+    optionEl.addEventListener('pointercancel', () => {
+        pointerStart = null;
+    });
+    optionEl.addEventListener('keydown', event => {
+        if (![' ', 'Enter'].includes(event.key)) {
+            return;
+        }
+
+        handleSelect(event);
+    });
     return optionEl;
 }
 
-function getWorldInfoGlobalSelectorSortedOptions(select) {
+function getWorldInfoGlobalSelectorOrderedOptions(select) {
     return Array.from(select.options)
         .filter(option => option.value !== '' && option.style.display !== 'none')
-        .sort((a, b) => {
-            const aRank = isWorldInfoGlobalSelectorOptionSelected(a) ? 0 : 1;
-            const bRank = isWorldInfoGlobalSelectorOptionSelected(b) ? 0 : 1;
+        .sort((a, b) => getWorldInfoGlobalSelectorOptionOrder(a) - getWorldInfoGlobalSelectorOptionOrder(b));
+}
 
-            if (aRank !== bRank) {
-                return aRank - bRank;
-            }
+function refreshWorldInfoGlobalSelectorDropdownSelectionState(select, state = getWorldInfoVueListOptimizationState()) {
+    const dropdownState = state.worldInfoGlobalSelectorDropdown;
 
-            return getWorldInfoGlobalSelectorOptionOrder(a) - getWorldInfoGlobalSelectorOptionOrder(b);
+    if (!(select instanceof HTMLSelectElement)
+        || !dropdownState
+        || dropdownState.select !== select
+        || !(dropdownState.optionsContainer instanceof HTMLElement)) {
+        return;
+    }
+
+    const selectedValues = new Set(Array.from(select.selectedOptions).map(option => option.value));
+
+    dropdownState.optionsContainer
+        .querySelectorAll('.bai-bai-wi-global-selector-option')
+        .forEach(optionEl => {
+            const isSelected = selectedValues.has(optionEl.dataset.value ?? '');
+            optionEl.classList.toggle('selected', isSelected);
+            optionEl.setAttribute('aria-selected', isSelected ? 'true' : 'false');
         });
 }
 
@@ -1288,6 +1386,46 @@ function getWorldInfoGlobalSelectorOptionOrder(option) {
     const parsed = Number.parseInt(option?.dataset?.[WORLD_INFO_GLOBAL_SELECTOR_OPTION_ORDER_DATASET_KEY] ?? '', 10);
 
     return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function suppressWorldInfoGlobalSelectorSearchMobileAutoKeyboard(field) {
+    field.dataset[WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY] = 'true';
+    field.setAttribute('readonly', 'readonly');
+    field.setAttribute('inputmode', 'none');
+
+    blurWorldInfoEditorSelectSearchField(field);
+
+    const restoreForUserInput = (event) => {
+        restoreWorldInfoGlobalSelectorSearchMobileInput(field);
+        focusWorldInfoEditorSelectSearchFieldFromUserInteraction(field, event);
+        event.stopPropagation();
+    };
+
+    field.addEventListener('pointerdown', restoreForUserInput, { capture: true, once: true });
+    field.addEventListener('touchstart', restoreForUserInput, { capture: true, once: true });
+    field.addEventListener('mousedown', restoreForUserInput, { capture: true, once: true });
+
+    setTimeout(() => {
+        if (field.dataset[WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY] === 'true') {
+            blurWorldInfoEditorSelectSearchField(field);
+            restoreWorldInfoGlobalSelectorSearchMobileInput(field);
+        }
+    }, WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_RESTORE_MS);
+}
+
+function restoreWorldInfoGlobalSelectorSearchMobileInput(field) {
+    if (!(field instanceof HTMLInputElement)
+        || field.dataset[WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY] !== 'true') {
+        return;
+    }
+
+    field.removeAttribute('readonly');
+
+    if (field.getAttribute('inputmode') === 'none') {
+        field.removeAttribute('inputmode');
+    }
+
+    delete field.dataset[WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY];
 }
 
 function installWorldInfoEditorSelectSearchInteractionGuard(state = getWorldInfoVueListOptimizationState()) {
@@ -3096,6 +3234,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 75%, transparent);
     flex: 0 0 auto;
     padding: 6px 8px;
+    position: relative;
 }
 
 .bai-bai-wi-global-selector-search {
@@ -3106,8 +3245,39 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     color: var(--SmartThemeBodyColor);
     font: inherit;
     min-height: 2.3em;
-    padding: 4px 8px;
+    padding: 4px 34px 4px 8px;
     width: 100%;
+}
+
+.bai-bai-wi-global-selector-search::-webkit-search-cancel-button {
+    display: none;
+}
+
+.bai-bai-wi-global-selector-search-clear {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    color: var(--SmartThemeBodyColor);
+    cursor: pointer;
+    display: flex;
+    font-size: 18px;
+    height: 28px;
+    justify-content: center;
+    line-height: 1;
+    margin: 0;
+    opacity: 0.7;
+    padding: 0;
+    position: absolute;
+    right: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+}
+
+.bai-bai-wi-global-selector-search-clear:hover {
+    background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 12%, transparent);
+    opacity: 1;
 }
 
 .bai-bai-wi-global-selector-options {
@@ -3115,14 +3285,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     min-height: 0;
     overflow-y: auto;
     padding: 4px 0;
-}
-
-.bai-bai-wi-global-selector-group {
-    color: var(--SmartThemeBodyColor);
-    font-size: 12px;
-    font-weight: 700;
-    opacity: 0.68;
-    padding: 9px 10px 4px;
+    touch-action: pan-y;
 }
 
 .bai-bai-wi-global-selector-option {
@@ -3131,6 +3294,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     line-height: 1.25;
     min-height: 34px;
     padding: 8px 10px;
+    touch-action: pan-y;
     user-select: none;
 }
 
