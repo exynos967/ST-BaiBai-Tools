@@ -1,4 +1,5 @@
 import {
+    chat_metadata,
     characters,
     event_types,
     eventSource,
@@ -20,8 +21,9 @@ import { getPresetManager } from '../../../preset-manager.js';
 import { applyPowerUserSettings, power_user } from '../../../power-user.js';
 import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
-import { debounce, download, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
+import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
+import { METADATA_KEY as WORLD_INFO_METADATA_KEY, selected_world_info, world_info, world_names } from '../../../world-info.js';
 const CURRENT_VERSION = '0.26.9';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
@@ -213,6 +215,7 @@ const WORLD_INFO_CHARACTER_FILTER_APPEND_PATCH_KEY = '__baiBaiToolkitWorldInfoCh
 const WORLD_INFO_VUE_LIST_OPTIMIZATION_KEY = '__baiBaiToolkitWorldInfoVueListOptimization';
 const WORLD_INFO_VUE_LIST_MODULE_PATH = './vendor/vue.esm-browser.prod.js';
 const WORLD_INFO_MOBILE_HEADER_LAYOUT_STYLE_ID = 'bai_bai_toolkit_world_info_mobile_header_layout_style';
+const WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY = 'baiBaiToolkitWorldInfoEditorSelectGrouped';
 const CHARACTER_SEARCH_OPTIMIZATION_KEY = 'baiBaiToolkitCharacterSearchOptimization';
 const REGEX_CONTAINER_SELECTOR = '#regex_container';
 const REGEX_EXTENSIONS_PANEL_SELECTOR = '#rm_extensions_block';
@@ -9889,12 +9892,14 @@ function applyWorldInfoListOptimization() {
 
     if (state.enabled) {
         installWorldInfoVueListPaginationPatch(state);
+        installWorldInfoEditorSelectGrouping(state);
         installWorldInfoMobileHeaderLayoutStyle();
         installWorldInfoMobileHeaderLayoutWatcher(state);
         installWorldInfoMobileLayoutMutationObserver(state);
     } else {
         unmountWorldInfoVueListApp(state);
         restoreWorldInfoVueListPaginationPatch(state);
+        removeWorldInfoEditorSelectGrouping(state);
         removeWorldInfoMobileLayoutMutationObserver(state);
         removeWorldInfoMobileHeaderLayoutWatcher(state);
         restoreWorldInfoPopupLayout();
@@ -9921,6 +9926,10 @@ function getWorldInfoVueListOptimizationState() {
             mobileHeaderLayoutHandler: null,
             mobileHeaderLayoutMediaQuery: null,
             mobileLayoutMutationObserver: null,
+            worldInfoEditorSelectOpenHandler: null,
+            worldInfoEditorSelectKeyHandler: null,
+            worldInfoEditorSelectSelect2Handler: null,
+            worldInfoEditorSelectGroupingApplying: false,
         };
     }
 
@@ -9982,6 +9991,309 @@ function restoreWorldInfoVueListPaginationPatch(state = getWorldInfoVueListOptim
 
     state.originalPagination = null;
     state.patchedPagination = null;
+}
+
+function installWorldInfoEditorSelectGrouping(state = getWorldInfoVueListOptimizationState()) {
+    if (state.worldInfoEditorSelectOpenHandler || !document?.body) {
+        return;
+    }
+
+    const openHandler = (event) => {
+        const select = getWorldInfoEditorSelectFromOpenEvent(event.target);
+
+        if (!select) {
+            return;
+        }
+
+        applyWorldInfoEditorSelectGrouping(state, select);
+    };
+
+    const keyHandler = (event) => {
+        if (![' ', 'Enter', 'ArrowDown'].includes(event.key)) {
+            return;
+        }
+
+        const select = event.target instanceof HTMLSelectElement && event.target.id === 'world_editor_select'
+            ? event.target
+            : null;
+
+        if (select) {
+            applyWorldInfoEditorSelectGrouping(state, select);
+        }
+    };
+
+    const select2Handler = (event) => {
+        const select = event.target instanceof HTMLSelectElement && event.target.id === 'world_editor_select'
+            ? event.target
+            : null;
+
+        if (select) {
+            applyWorldInfoEditorSelectGrouping(state, select);
+        }
+    };
+
+    document.addEventListener('pointerdown', openHandler, true);
+    document.addEventListener('keydown', keyHandler, true);
+    globalThis.jQuery?.(document).on('select2:opening.baiBaiToolkitWorldInfoEditorSelectGrouping', '#world_editor_select', select2Handler);
+
+    state.worldInfoEditorSelectOpenHandler = openHandler;
+    state.worldInfoEditorSelectKeyHandler = keyHandler;
+    state.worldInfoEditorSelectSelect2Handler = select2Handler;
+}
+
+function removeWorldInfoEditorSelectGrouping(state = getWorldInfoVueListOptimizationState()) {
+    if (state.worldInfoEditorSelectOpenHandler) {
+        document.removeEventListener('pointerdown', state.worldInfoEditorSelectOpenHandler, true);
+        state.worldInfoEditorSelectOpenHandler = null;
+    }
+
+    if (state.worldInfoEditorSelectKeyHandler) {
+        document.removeEventListener('keydown', state.worldInfoEditorSelectKeyHandler, true);
+        state.worldInfoEditorSelectKeyHandler = null;
+    }
+
+    if (state.worldInfoEditorSelectSelect2Handler) {
+        globalThis.jQuery?.(document).off('select2:opening.baiBaiToolkitWorldInfoEditorSelectGrouping', '#world_editor_select', state.worldInfoEditorSelectSelect2Handler);
+        state.worldInfoEditorSelectSelect2Handler = null;
+    }
+
+    restoreWorldInfoEditorSelectOrder(state);
+}
+
+function getWorldInfoEditorSelectFromOpenEvent(target) {
+    if (!(target instanceof Element)) {
+        return null;
+    }
+
+    if (target instanceof HTMLSelectElement && target.id === 'world_editor_select') {
+        return target;
+    }
+
+    const select2Container = target.closest?.('.select2-container');
+    const select = select2Container?.previousElementSibling;
+
+    return select instanceof HTMLSelectElement && select.id === 'world_editor_select'
+        ? select
+        : null;
+}
+
+function applyWorldInfoEditorSelectGrouping(state = getWorldInfoVueListOptimizationState(), select = document.getElementById('world_editor_select')) {
+    if (!(select instanceof HTMLSelectElement) || state.worldInfoEditorSelectGroupingApplying) {
+        return;
+    }
+
+    const selectableOptions = Array.from(select.options).filter(option => option.value !== '');
+
+    if (selectableOptions.length === 0) {
+        return;
+    }
+
+    const selectedValue = select.value;
+    const categorizedOptions = categorizeWorldInfoEditorSelectOptions(selectableOptions);
+    const nextSignature = getWorldInfoEditorSelectGroupingSignature(categorizedOptions);
+
+    if (select.dataset[WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY] === 'true'
+        && select.dataset.baiBaiToolkitWorldInfoEditorSelectGroupingSignature === nextSignature) {
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    const defaultOptions = Array.from(select.options).filter(option => option.value === '');
+
+    state.worldInfoEditorSelectGroupingApplying = true;
+
+    try {
+        defaultOptions.forEach(option => fragment.append(option));
+
+        categorizedOptions.forEach(({ label, options }) => {
+            if (options.length === 0) {
+                return;
+            }
+
+            const group = document.createElement('optgroup');
+            group.label = label;
+            options.forEach(option => group.append(option));
+            fragment.append(group);
+        });
+
+        select.replaceChildren(fragment);
+        select.value = selectedValue;
+        select.dataset[WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY] = 'true';
+        select.dataset.baiBaiToolkitWorldInfoEditorSelectGroupingSignature = nextSignature;
+        refreshWorldInfoEditorSelect2(select);
+    } finally {
+        state.worldInfoEditorSelectGroupingApplying = false;
+    }
+}
+
+function restoreWorldInfoEditorSelectOrder(state = getWorldInfoVueListOptimizationState()) {
+    const select = document.getElementById('world_editor_select');
+
+    if (!(select instanceof HTMLSelectElement) || select.dataset[WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY] !== 'true') {
+        return;
+    }
+
+    const selectedValue = select.value;
+    const defaultOptions = Array.from(select.options).filter(option => option.value === '');
+    const selectableOptions = Array.from(select.options)
+        .filter(option => option.value !== '')
+        .sort((a, b) => getWorldInfoOptionSortIndex(a) - getWorldInfoOptionSortIndex(b));
+    const fragment = document.createDocumentFragment();
+
+    state.worldInfoEditorSelectGroupingApplying = true;
+
+    try {
+        defaultOptions.forEach(option => fragment.append(option));
+        selectableOptions.forEach(option => fragment.append(option));
+        select.replaceChildren(fragment);
+        select.value = selectedValue;
+        delete select.dataset[WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY];
+        delete select.dataset.baiBaiToolkitWorldInfoEditorSelectGroupingSignature;
+        refreshWorldInfoEditorSelect2(select);
+    } finally {
+        state.worldInfoEditorSelectGroupingApplying = false;
+    }
+}
+
+function categorizeWorldInfoEditorSelectOptions(options) {
+    const optionMap = new Map();
+    const nativeOrderNames = [];
+
+    options
+        .slice()
+        .sort((a, b) => getWorldInfoOptionSortIndex(a) - getWorldInfoOptionSortIndex(b))
+        .forEach(option => {
+            const name = getWorldInfoOptionName(option);
+
+            if (!name || optionMap.has(name)) {
+                return;
+            }
+
+            optionMap.set(name, option);
+            nativeOrderNames.push(name);
+        });
+
+    const pickedNames = new Set();
+    const groups = getWorldInfoEditorSelectGroups(nativeOrderNames);
+
+    return groups.map(group => {
+        const groupOptions = [];
+
+        group.names.forEach(name => {
+            if (pickedNames.has(name)) {
+                return;
+            }
+
+            const option = optionMap.get(name);
+
+            if (!option) {
+                return;
+            }
+
+            pickedNames.add(name);
+            groupOptions.push(option);
+        });
+
+        return { label: group.label, options: groupOptions };
+    });
+}
+
+function getWorldInfoEditorSelectGroupingSignature(groups) {
+    return groups
+        .map(group => `${group.label}:${group.options.map(option => option.value).join(',')}`)
+        .join('|');
+}
+
+function getWorldInfoEditorSelectGroups(nativeOrderNames) {
+    const existingNames = new Set(nativeOrderNames);
+    const globalNames = normalizeWorldInfoNameList(selected_world_info).filter(name => existingNames.has(name));
+    const characterPrimaryNames = normalizeWorldInfoNameList(characters?.[this_chid]?.data?.extensions?.world).filter(name => existingNames.has(name));
+    const characterAdditionalNames = getCurrentCharacterAdditionalWorldInfoNames().filter(name => existingNames.has(name));
+    const chatNames = normalizeWorldInfoNameList(chat_metadata?.[WORLD_INFO_METADATA_KEY]).filter(name => existingNames.has(name));
+    const reservedNames = new Set([
+        ...globalNames,
+        ...characterPrimaryNames,
+        ...characterAdditionalNames,
+        ...chatNames,
+    ]);
+    const otherNames = nativeOrderNames.filter(name => !reservedNames.has(name));
+
+    return [
+        { label: '当前开启的全局世界书', names: orderWorldInfoNames(globalNames, nativeOrderNames) },
+        { label: '角色卡世界书', names: orderWorldInfoNames(characterPrimaryNames, nativeOrderNames) },
+        { label: '附加角色世界书', names: orderWorldInfoNames(characterAdditionalNames, nativeOrderNames) },
+        { label: '聊天世界书', names: orderWorldInfoNames(chatNames, nativeOrderNames) },
+        { label: '其他世界书', names: otherNames },
+    ];
+}
+
+function getCurrentCharacterAdditionalWorldInfoNames() {
+    if (this_chid === undefined || this_chid === null) {
+        return [];
+    }
+
+    let fileName = '';
+
+    try {
+        fileName = getCharaFilename(this_chid);
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to resolve current character lorebook file name`, error);
+    }
+
+    if (!fileName) {
+        return [];
+    }
+
+    const extraCharLore = world_info?.charLore?.find(entry => entry?.name === fileName);
+    return normalizeWorldInfoNameList(extraCharLore?.extraBooks);
+}
+
+function normalizeWorldInfoNameList(value) {
+    const values = Array.isArray(value) ? value : [value];
+    const knownWorldNames = new Set(Array.isArray(world_names) ? world_names : []);
+    const seen = new Set();
+
+    return values
+        .map(name => String(name ?? '').trim())
+        .filter(name => {
+            if (!name || seen.has(name)) {
+                return false;
+            }
+
+            if (knownWorldNames.size > 0 && !knownWorldNames.has(name)) {
+                return false;
+            }
+
+            seen.add(name);
+            return true;
+        });
+}
+
+function orderWorldInfoNames(names, nativeOrderNames) {
+    const order = new Map(nativeOrderNames.map((name, index) => [name, index]));
+
+    return names
+        .filter((name, index, array) => array.indexOf(name) === index)
+        .sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER));
+}
+
+function getWorldInfoOptionName(option) {
+    return String(option?.textContent ?? '').trim();
+}
+
+function getWorldInfoOptionSortIndex(option) {
+    const parsed = Number.parseInt(option?.value ?? '', 10);
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function refreshWorldInfoEditorSelect2(select) {
+    const $select = globalThis.jQuery?.(select);
+
+    if (!$select?.data?.('select2')) {
+        return;
+    }
+
+    $select.trigger('change.select2');
 }
 
 function shouldWrapWorldInfoPaginationCall(targets, args) {
