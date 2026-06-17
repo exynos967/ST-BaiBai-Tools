@@ -330,7 +330,7 @@ const PERFORMANCE_TRACE_INTERACTION_SELECTOR = [
 const defaultSettings = {
     updatePromptOnAvailableEnabled: true,
     resizeGuardEnabled: true,
-    descriptionCodeMirrorEditorEnabled: true,
+    descriptionCodeMirrorEditorEnabled: false,
     customCssInputOptimizationEnabled: true,
     customCssShadowPropertyEnabled: true,
     worldInfoDrawerOptimizationEnabled: true,
@@ -363,7 +363,7 @@ const defaultSettings = {
     presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
     presetGroupingEnabled: true,
-    presetPromptCodeMirrorEditorEnabled: true,
+    presetPromptCodeMirrorEditorEnabled: false,
     presetAutoSaveAfterPromptEditEnabled: false,
     regexQuickOperationOptimizationEnabled: true,
     regexListGroups: {},
@@ -2856,16 +2856,19 @@ async function renderSettingsPanel() {
         });
 
     $('#bai_bai_toolkit_world_info_drawer_optimization_enabled')
-        .prop('checked', settings.worldInfoDrawerOptimizationEnabled)
+        .prop('checked', settings.worldInfoDrawerOptimizationEnabled || settings.worldInfoPageOptimizationEnabled)
         .on('input', function () {
-            settings.worldInfoDrawerOptimizationEnabled = Boolean($(this).prop('checked'));
-            if (!settings.worldInfoDrawerOptimizationEnabled) {
+            const enabled = Boolean($(this).prop('checked'));
+            settings.worldInfoDrawerOptimizationEnabled = enabled;
+            settings.worldInfoPageOptimizationEnabled = enabled;
+            if (!enabled) {
                 worldInfoPageOptimization.initializeDeferredWorldInfoSelect2(document);
             }
             saveExtensionSettings();
             worldInfoPageOptimization.applyWorldInfoDrawerOptimization();
             worldInfoPageOptimization.applyWorldInfoLazySelect2Optimization();
             worldInfoPageOptimization.applyWorldInfoCharacterFilterOptionsOptimization();
+            worldInfoPageOptimization.applyWorldInfoPageOptimization();
         });
 
     worldInfoPageOptimization.bindWorldInfoPageOptimizationSettings({ saveSettings: saveExtensionSettings });

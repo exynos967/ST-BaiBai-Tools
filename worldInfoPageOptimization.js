@@ -27,18 +27,6 @@ export function configureWorldInfoPageOptimization(context = {}) {
 
 export function bindWorldInfoPageOptimizationSettings({ saveSettings } = {}) {
     saveWorldInfoPageOptimizationSettings = saveSettings ?? saveWorldInfoPageOptimizationSettings;
-
-    $('#bai_bai_toolkit_world_info_page_optimization_enabled')
-        .prop('checked', Boolean(settings.worldInfoPageOptimizationEnabled))
-        .on('input', function () {
-            settings.worldInfoPageOptimizationEnabled = Boolean($(this).prop('checked'));
-
-            if (typeof saveWorldInfoPageOptimizationSettings === 'function') {
-                saveWorldInfoPageOptimizationSettings();
-            }
-
-            applyWorldInfoPageOptimization();
-        });
 }
 
 export function applyWorldInfoPageOptimization() {
@@ -2562,7 +2550,9 @@ function installWorldInfoDrawerAnimationStyle() {
 }
 
 function handleWorldInfoDrawerToggleClick(event) {
-    if (!settings.worldInfoDrawerOptimizationEnabled) {
+    const shouldHandleDrawer = settings.worldInfoDrawerOptimizationEnabled || settings.worldInfoListOptimizationEnabled;
+
+    if (!shouldHandleDrawer) {
         return;
     }
 
@@ -2592,7 +2582,12 @@ function handleWorldInfoDrawerToggleClick(event) {
     const expand = !isWorldInfoDrawerContentExpanded(content);
 
     setWorldInfoDrawerIconExpanded(icon, expand);
-    animateWorldInfoDrawerContent(drawer, content, expand);
+
+    if (settings.worldInfoListOptimizationEnabled) {
+        animateWorldInfoDrawerContent(drawer, content, expand);
+    } else {
+        toggleWorldInfoDrawerContentImmediately(drawer, content, expand);
+    }
 }
 
 function setWorldInfoDrawerIconExpanded(icon, expand) {
@@ -2658,6 +2653,29 @@ function animateWorldInfoDrawerContent(drawer, content, expand) {
 
         armWorldInfoDrawerAnimationEnd(content, state, expand);
     });
+}
+
+function toggleWorldInfoDrawerContentImmediately(drawer, content, expand) {
+    if (!(drawer instanceof HTMLElement) || !(content instanceof HTMLElement)) {
+        return;
+    }
+
+    const state = content.__baiBaiWorldInfoDrawerAnimation;
+    cancelWorldInfoDrawerAnimation(state);
+
+    if (expand && !content.querySelector(':scope > .world_entry_edit')) {
+        $(drawer).trigger('inline-drawer-toggle');
+    }
+
+    content.classList.remove('bai-bai-wi-drawer-motion', 'bai-bai-wi-drawer-enter', 'bai-bai-wi-drawer-open', 'bai-bai-wi-drawer-leave');
+    content.style.display = expand ? 'block' : 'none';
+    content.style.height = '';
+
+    if (state) {
+        state.phase = expand ? 'expanded' : 'collapsed';
+    }
+
+    resetWorldInfoDrawerTextareaHeights(content);
 }
 
 function getWorldInfoDrawerAnimationState(content) {
@@ -2738,6 +2756,10 @@ function finishWorldInfoDrawerAnimation(content, state, expand) {
 
     content.style.height = '';
 
+    resetWorldInfoDrawerTextareaHeights(content);
+}
+
+function resetWorldInfoDrawerTextareaHeights(content) {
     if (!CSS.supports('field-sizing', 'content')) {
         content.querySelectorAll('textarea.autoSetHeight').forEach(textarea => {
             void resetScrollHeight(textarea);
