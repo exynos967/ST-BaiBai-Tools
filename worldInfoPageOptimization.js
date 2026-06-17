@@ -1,6 +1,8 @@
 import {
     chat_metadata,
     characters,
+    event_types,
+    eventSource,
     this_chid,
 } from '../../../../script.js';
 import { AutoComplete } from '../../../autocomplete/AutoComplete.js';
@@ -383,22 +385,20 @@ function getWorldInfoVueListOptimizationState() {
             worldInfoEditorSelectSearchOpenHandler: null,
             worldInfoEditorSelectSearchInteractionGuard: null,
             worldInfoEditorSelectGroupingApplying: false,
-            worldInfoGlobalSelectorMutationObserver: null,
             worldInfoGlobalSelectorDropdown: null,
+            worldInfoGlobalSelectorSyncHandler: null,
             worldInfoGlobalSelectorTriggerHandler: null,
             worldInfoGlobalSelectorTriggerEvents: null,
-            worldInfoGlobalSelectorRefreshQueued: false,
             worldInfoGlobalSelectorSelects: new Set(),
         };
     }
 
     const state = extensionState[WORLD_INFO_VUE_LIST_OPTIMIZATION_KEY];
 
-    state.worldInfoGlobalSelectorMutationObserver ??= null;
     state.worldInfoGlobalSelectorDropdown ??= null;
+    state.worldInfoGlobalSelectorSyncHandler ??= null;
     state.worldInfoGlobalSelectorTriggerHandler ??= null;
     state.worldInfoGlobalSelectorTriggerEvents ??= null;
-    state.worldInfoGlobalSelectorRefreshQueued ??= false;
 
     if (!(state.worldInfoGlobalSelectorSelects instanceof Set)) {
         state.worldInfoGlobalSelectorSelects = new Set();
@@ -603,24 +603,12 @@ function removeWorldInfoEditorSelectSearch(state = getWorldInfoVueListOptimizati
 
 function installWorldInfoGlobalSelectorOptimization(state = getWorldInfoVueListOptimizationState()) {
     refreshWorldInfoGlobalSelectorOptimization(state);
+    installWorldInfoGlobalSelectorSyncHandler(state);
     installWorldInfoGlobalSelectorTriggerHandler(state);
-
-    if (state.worldInfoGlobalSelectorMutationObserver || !document?.body || typeof MutationObserver !== 'function') {
-        return;
-    }
-
-    const observer = new MutationObserver(() => {
-        scheduleWorldInfoGlobalSelectorRefresh(state);
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-    state.worldInfoGlobalSelectorMutationObserver = observer;
 }
 
 function removeWorldInfoGlobalSelectorOptimization(state = getWorldInfoVueListOptimizationState()) {
-    state.worldInfoGlobalSelectorMutationObserver?.disconnect();
-    state.worldInfoGlobalSelectorMutationObserver = null;
-    state.worldInfoGlobalSelectorRefreshQueued = false;
+    removeWorldInfoGlobalSelectorSyncHandler(state);
     removeWorldInfoGlobalSelectorTriggerHandler(state);
 
     for (const select of Array.from(state.worldInfoGlobalSelectorSelects ?? [])) {
@@ -628,6 +616,51 @@ function removeWorldInfoGlobalSelectorOptimization(state = getWorldInfoVueListOp
     }
 
     state.worldInfoGlobalSelectorSelects?.clear?.();
+}
+
+function installWorldInfoGlobalSelectorSyncHandler(state = getWorldInfoVueListOptimizationState()) {
+    if (state.worldInfoGlobalSelectorSyncHandler) {
+        return;
+    }
+
+    const handler = (event) => {
+        if (event?.target instanceof Element
+            && !event.target.closest('#WIMultiSelector')
+            && event.target.id !== 'world_editor_select') {
+            return;
+        }
+
+        syncWorldInfoGlobalSelectorDisplays(state);
+    };
+
+    eventSource?.on?.(event_types.WORLDINFO_SETTINGS_UPDATED, handler);
+    document.addEventListener('change', handler, true);
+    state.worldInfoGlobalSelectorSyncHandler = handler;
+}
+
+function removeWorldInfoGlobalSelectorSyncHandler(state = getWorldInfoVueListOptimizationState()) {
+    const handler = state.worldInfoGlobalSelectorSyncHandler;
+
+    if (!handler) {
+        return;
+    }
+
+    eventSource?.removeListener?.(event_types.WORLDINFO_SETTINGS_UPDATED, handler);
+    document.removeEventListener('change', handler, true);
+    state.worldInfoGlobalSelectorSyncHandler = null;
+}
+
+function syncWorldInfoGlobalSelectorDisplays(state = getWorldInfoVueListOptimizationState()) {
+    for (const select of Array.from(state.worldInfoGlobalSelectorSelects ?? [])) {
+        if (!select.isConnected) {
+            restoreWorldInfoGlobalSelector(select, state);
+            continue;
+        }
+
+        ensureWorldInfoGlobalSelectorOptionOrder(select);
+        refreshWorldInfoGlobalSelectorDisplay(select);
+        refreshWorldInfoGlobalSelectorDropdown(select, state);
+    }
 }
 
 function installWorldInfoGlobalSelectorTriggerHandler(state = getWorldInfoVueListOptimizationState()) {
@@ -678,21 +711,6 @@ function removeWorldInfoGlobalSelectorTriggerHandler(state = getWorldInfoVueList
         .forEach(eventName => document.removeEventListener(eventName, handler, true));
     state.worldInfoGlobalSelectorTriggerHandler = null;
     state.worldInfoGlobalSelectorTriggerEvents = null;
-}
-
-function scheduleWorldInfoGlobalSelectorRefresh(state = getWorldInfoVueListOptimizationState()) {
-    if (state.worldInfoGlobalSelectorRefreshQueued) {
-        return;
-    }
-
-    state.worldInfoGlobalSelectorRefreshQueued = true;
-    requestAnimationFrame(() => {
-        state.worldInfoGlobalSelectorRefreshQueued = false;
-
-        if (settings.worldInfoListOptimizationEnabled) {
-            refreshWorldInfoGlobalSelectorOptimization(state);
-        }
-    });
 }
 
 function refreshWorldInfoGlobalSelectorOptimization(state = getWorldInfoVueListOptimizationState()) {
@@ -748,7 +766,6 @@ function enhanceWorldInfoGlobalSelector(select, state = getWorldInfoVueListOptim
             displayEl: null,
             originalSelectDisplay: select.style.display,
             originalSelect2Display: null,
-            optionObserver: null,
             changeHandler: null,
             triggerHandler: null,
         };
@@ -761,20 +778,6 @@ function enhanceWorldInfoGlobalSelector(select, state = getWorldInfoVueListOptim
             refreshWorldInfoGlobalSelectorDropdown(select);
         };
         select.addEventListener('change', selectState.changeHandler);
-
-        if (typeof MutationObserver === 'function') {
-            selectState.optionObserver = new MutationObserver(() => {
-                ensureWorldInfoGlobalSelectorOptionOrder(select);
-                refreshWorldInfoGlobalSelectorDisplay(select);
-                refreshWorldInfoGlobalSelectorDropdown(select);
-            });
-            selectState.optionObserver.observe(select, {
-                attributes: true,
-                attributeFilter: ['selected'],
-                childList: true,
-                subtree: true,
-            });
-        }
     }
 
     replaceWorldInfoGlobalSelectorDisplay(select);
@@ -790,7 +793,6 @@ function restoreWorldInfoGlobalSelector(select, state = getWorldInfoVueListOptim
     }
 
     select.removeEventListener('change', selectState.changeHandler);
-    selectState.optionObserver?.disconnect();
     closeWorldInfoGlobalSelectorDropdown(state);
 
     restoreWorldInfoGlobalSelectorOptionOrder(select);
@@ -988,6 +990,8 @@ function openWorldInfoGlobalSelectorDropdown(select, state = getWorldInfoVueList
         return;
     }
 
+    ensureWorldInfoGlobalSelectorOptionOrder(select);
+    refreshWorldInfoGlobalSelectorDisplay(select);
     closeWorldInfoGlobalSelectorDropdown(state);
     closeNativeWorldInfoGlobalSelectorSelect2(select);
 
