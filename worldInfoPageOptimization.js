@@ -257,6 +257,7 @@ const WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY = 'baiBaiToolkitWorldInfoEdi
 const WORLD_INFO_EDITOR_SELECT_SEARCH_DATASET_KEY = 'baiBaiToolkitWorldInfoEditorSelectSearch';
 const WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY = 'baiBaiToolkitWorldInfoEditorSelectSearchMobileSuppressed';
 const WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_RESTORE_MS = 450;
+const WORLD_INFO_EDITOR_SELECT_STYLE_KEY = '__baiBaiToolkitWorldInfoEditorSelectStyle';
 const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
 const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer';
 const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
@@ -625,10 +626,12 @@ function ensureWorldInfoEditorSelectSearch(select = document.getElementById('wor
     if (select2) {
         select2.options?.set?.('minimumResultsForSearch', 0);
         select2.options?.set?.('searchInputPlaceholder', 'Search...');
+        syncWorldInfoEditorSelect2Theme(select);
         return;
     }
 
     const placeholder = select.querySelector('option[value=""]')?.textContent?.trim() || '--- Pick to Edit ---';
+    captureWorldInfoEditorSelectTheme(select);
 
     $select.select2({
         width: '100%',
@@ -641,6 +644,7 @@ function ensureWorldInfoEditorSelectSearch(select = document.getElementById('wor
     });
 
     select.dataset[WORLD_INFO_EDITOR_SELECT_SEARCH_DATASET_KEY] = 'true';
+    syncWorldInfoEditorSelect2Theme(select);
 }
 
 function forceWorldInfoEditorSelectSearchField(select = document.getElementById('world_editor_select')) {
@@ -649,6 +653,7 @@ function forceWorldInfoEditorSelectSearchField(select = document.getElementById(
     }
 
     const field = document.querySelector('.select2-container--open .select2-search__field');
+    syncWorldInfoEditorSelect2Theme(select);
 
     if (!(field instanceof HTMLInputElement)) {
         return;
@@ -664,6 +669,147 @@ function forceWorldInfoEditorSelectSearchField(select = document.getElementById(
     }
 
     field.focus({ preventScroll: true });
+}
+
+function captureWorldInfoEditorSelectTheme(select) {
+    if (!(select instanceof HTMLSelectElement) || select[WORLD_INFO_EDITOR_SELECT_STYLE_KEY]) {
+        return;
+    }
+
+    const style = getComputedStyle(select);
+    select[WORLD_INFO_EDITOR_SELECT_STYLE_KEY] = {
+        backgroundColor: style.backgroundColor,
+        borderBottomColor: style.borderBottomColor,
+        borderBottomLeftRadius: style.borderBottomLeftRadius,
+        borderBottomRightRadius: style.borderBottomRightRadius,
+        borderBottomStyle: style.borderBottomStyle,
+        borderBottomWidth: style.borderBottomWidth,
+        borderLeftColor: style.borderLeftColor,
+        borderLeftStyle: style.borderLeftStyle,
+        borderLeftWidth: style.borderLeftWidth,
+        borderRightColor: style.borderRightColor,
+        borderRightStyle: style.borderRightStyle,
+        borderRightWidth: style.borderRightWidth,
+        borderTopColor: style.borderTopColor,
+        borderTopLeftRadius: style.borderTopLeftRadius,
+        borderTopRightRadius: style.borderTopRightRadius,
+        borderTopStyle: style.borderTopStyle,
+        borderTopWidth: style.borderTopWidth,
+        boxShadow: style.boxShadow,
+        color: style.color,
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        height: style.height,
+        lineHeight: style.lineHeight,
+        minHeight: style.minHeight,
+        paddingBottom: style.paddingBottom,
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        paddingTop: style.paddingTop,
+    };
+}
+
+function syncWorldInfoEditorSelect2Theme(select) {
+    if (!(select instanceof HTMLSelectElement)) {
+        return;
+    }
+
+    const select2 = globalThis.jQuery?.(select).data?.('select2');
+    const container = select2?.$container?.[0];
+    const selection = container?.querySelector?.('.select2-selection--single');
+    const rendered = container?.querySelector?.('.select2-selection__rendered');
+    const arrow = container?.querySelector?.('.select2-selection__arrow');
+    const arrowMarker = arrow?.querySelector?.('b');
+    const capturedStyle = select[WORLD_INFO_EDITOR_SELECT_STYLE_KEY];
+
+    if (!(selection instanceof HTMLElement) || !capturedStyle) {
+        return;
+    }
+
+    Object.assign(selection.style, {
+        backgroundColor: capturedStyle.backgroundColor,
+        borderBottomColor: capturedStyle.borderBottomColor,
+        borderBottomLeftRadius: capturedStyle.borderBottomLeftRadius,
+        borderBottomRightRadius: capturedStyle.borderBottomRightRadius,
+        borderBottomStyle: capturedStyle.borderBottomStyle,
+        borderBottomWidth: capturedStyle.borderBottomWidth,
+        borderLeftColor: capturedStyle.borderLeftColor,
+        borderLeftStyle: capturedStyle.borderLeftStyle,
+        borderLeftWidth: capturedStyle.borderLeftWidth,
+        borderRightColor: capturedStyle.borderRightColor,
+        borderRightStyle: capturedStyle.borderRightStyle,
+        borderRightWidth: capturedStyle.borderRightWidth,
+        borderTopColor: capturedStyle.borderTopColor,
+        borderTopLeftRadius: capturedStyle.borderTopLeftRadius,
+        borderTopRightRadius: capturedStyle.borderTopRightRadius,
+        borderTopStyle: capturedStyle.borderTopStyle,
+        borderTopWidth: capturedStyle.borderTopWidth,
+        boxShadow: capturedStyle.boxShadow,
+        color: capturedStyle.color,
+        alignItems: 'center',
+        display: 'flex',
+        fontFamily: capturedStyle.fontFamily,
+        fontSize: capturedStyle.fontSize,
+        fontWeight: capturedStyle.fontWeight,
+        minHeight: capturedStyle.minHeight,
+    });
+
+    if (isUsableCssSize(capturedStyle.height)) {
+        selection.style.height = capturedStyle.height;
+    }
+
+    if (rendered instanceof HTMLElement) {
+        Object.assign(rendered.style, {
+            color: capturedStyle.color,
+            display: 'block',
+            flex: '1 1 auto',
+            fontFamily: capturedStyle.fontFamily,
+            fontSize: capturedStyle.fontSize,
+            fontWeight: capturedStyle.fontWeight,
+            lineHeight: '1.2',
+            minWidth: '0',
+            paddingBottom: '0',
+            paddingLeft: capturedStyle.paddingLeft,
+            paddingRight: '28px',
+            paddingTop: '0',
+        });
+    }
+
+    if (arrow instanceof HTMLElement) {
+        Object.assign(arrow.style, {
+            alignItems: 'center',
+            color: capturedStyle.color,
+            display: 'flex',
+            justifyContent: 'center',
+            opacity: '0.62',
+            right: '8px',
+            top: '0',
+            width: '18px',
+        });
+
+        if (isUsableCssSize(capturedStyle.height)) {
+            arrow.style.height = capturedStyle.height;
+        }
+    }
+
+    if (arrowMarker instanceof HTMLElement) {
+        Object.assign(arrowMarker.style, {
+            borderColor: 'currentColor transparent transparent transparent',
+            borderStyle: 'solid',
+            borderWidth: '6px 5px 0 5px',
+            height: '0',
+            left: 'auto',
+            margin: '0',
+            position: 'static',
+            top: 'auto',
+            width: '0',
+        });
+    }
+}
+
+function isUsableCssSize(value) {
+    return typeof value === 'string' && value !== '' && value !== 'auto' && value !== '0px' && value !== '1px';
 }
 
 function getWorldInfoEditorSelect2SearchField(select) {
@@ -2076,6 +2222,54 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         flex: 0 0 100%;
         width: 100% !important;
         min-width: 0;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container .select2-selection--single {
+        align-items: center !important;
+        background-color: var(--SmartThemeBlurTintColor);
+        border-color: var(--SmartThemeBorderColor);
+        color: var(--SmartThemeBodyColor);
+        display: flex !important;
+        min-height: 2.25em;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container .select2-selection__rendered {
+        color: var(--SmartThemeBodyColor);
+        flex: 1 1 auto;
+        line-height: 1.2 !important;
+        min-width: 0;
+        padding-bottom: 0 !important;
+        padding-right: 28px !important;
+        padding-top: 0 !important;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container .select2-selection__placeholder {
+        color: var(--SmartThemeBodyColor);
+        opacity: 0.65;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container .select2-selection__arrow {
+        align-items: center !important;
+        color: var(--SmartThemeBodyColor);
+        display: flex !important;
+        height: 100% !important;
+        justify-content: center !important;
+        opacity: 0.62;
+        right: 8px !important;
+        top: 0 !important;
+        width: 18px !important;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container .select2-selection__arrow b {
+        border-color: currentColor transparent transparent transparent !important;
+        border-style: solid !important;
+        border-width: 6px 5px 0 5px !important;
+        height: 0 !important;
+        left: auto !important;
+        margin: 0 !important;
+        position: static !important;
+        top: auto !important;
+        width: 0 !important;
     }
 
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > #world_info_pagination {
