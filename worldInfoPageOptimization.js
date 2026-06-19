@@ -3708,6 +3708,18 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         overflow: hidden;
     }
 
+    #world_popup_entries_list .bai-bai-wi-mobile-expand-slot .inline-drawer-toggle::before {
+        position: static !important;
+        inset: auto !important;
+        display: block !important;
+        width: auto !important;
+        height: auto !important;
+        margin: 0 !important;
+        line-height: 1 !important;
+        transform: none !important;
+        text-align: center !important;
+    }
+
     #world_popup_entries_list .world_entry_edit[data-bai-bai-world-info-mobile-expanded-layout="true"] {
         width: 100%;
         display: flex;
@@ -3895,6 +3907,18 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         bottom: auto !important;
         left: auto !important;
         z-index: auto !important;
+    }
+
+    #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] .bai-bai-wi-mobile-expand-slot .inline-drawer-toggle::before {
+        position: static !important;
+        inset: auto !important;
+        display: block !important;
+        width: auto !important;
+        height: auto !important;
+        margin: 0 !important;
+        line-height: 1 !important;
+        transform: none !important;
+        text-align: center !important;
     }
 
     #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] .bai-bai-wi-mobile-title-cell .WIEntryTitleAndStatus.flex-container.flex1.alignitemscenter,

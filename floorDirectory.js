@@ -249,7 +249,7 @@ async function confirmFloorDelete(ctx, index, deleteCount) {
     return Boolean(globalThis.confirm?.(message));
 }
 
-async function deleteFloorRangeWithSlashCommand(ctx, index) {
+async function deleteFloorRangeWithSlashCommand(ctx, index, options = {}) {
     const chat = getChatArray(ctx);
     if (!chat[index]) {
         throw new Error('楼层不存在');
@@ -260,14 +260,18 @@ async function deleteFloorRangeWithSlashCommand(ctx, index) {
         return 0;
     }
 
+    const executeSlashCommandsWithOptions = ctx?.executeSlashCommandsWithOptions;
+    if (typeof executeSlashCommandsWithOptions !== 'function') {
+        throw new Error('无法删除：当前酒馆版本未暴露斜杠命令执行接口');
+    }
+
     const confirmed = await confirmFloorDelete(ctx, index, deleteCount);
     if (!confirmed) {
         return 0;
     }
 
-    const executeSlashCommandsWithOptions = ctx?.executeSlashCommandsWithOptions;
-    if (typeof executeSlashCommandsWithOptions !== 'function') {
-        throw new Error('无法删除：当前酒馆版本未暴露斜杠命令执行接口');
+    if (typeof options.onConfirmed === 'function') {
+        options.onConfirmed(deleteCount);
     }
 
     const result = await executeSlashCommandsWithOptions(`/del ${deleteCount}`, {
@@ -355,7 +359,7 @@ function openFloorDirectoryDialog() {
     document.querySelector(`.${OVERLAY_CLASS}`)?.remove();
 
     const ctx = getStContext();
-    const chat = getChatArray(ctx);
+    let chat = getChatArray(ctx);
 
     const overlay = document.createElement('div');
     overlay.className = OVERLAY_CLASS;
@@ -621,8 +625,8 @@ function openFloorDirectoryDialog() {
 
     const buildRow = (entry, keyword) => {
         const { index } = entry;
-        const message = chat[index] ?? entry.message;
-        const previewText = buildPreviewText(message);
+        let message = chat[index] ?? entry.message;
+        let previewText = buildPreviewText(message);
         const isUser = Boolean(message?.is_user);
 
         const row = document.createElement('div');
@@ -656,6 +660,12 @@ function openFloorDirectoryDialog() {
         const snippet = document.createElement('div');
         snippet.className = 'bai-bai-floor-snippet';
         snippet.innerHTML = highlightHtml(buildSnippet(previewText, keyword), keyword);
+
+        const updatePreview = nextMessage => {
+            message = nextMessage ?? message;
+            previewText = buildPreviewText(message);
+            snippet.innerHTML = highlightHtml(buildSnippet(previewText, keyword), keyword);
+        };
 
         // 展开区：正文预览(.bai-bai-floor-detail) + 操作栏(.bai-bai-floor-actions)，
         // 进入编辑后正文换成 textarea + 保存/取消。
@@ -738,11 +748,28 @@ function openFloorDirectoryDialog() {
                 cancel.disabled = true;
                 const previousHtml = save.innerHTML;
                 save.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>保存中</span>';
+                const previousMessage = message;
+                const previousPreviewText = previewText;
+                const draftMessage = { ...(message ?? {}), mes: textarea.value };
+                updatePreview(draftMessage);
                 try {
                     await saveFloorEdit(freshCtx, index, textarea.value);
+                    const latestChat = getChatArray(freshCtx);
+                    if (latestChat.length) {
+                        chat = latestChat;
+                    }
+                    if (chat[index]) {
+                        updatePreview(chat[index]);
+                    } else {
+                        message = { ...(message ?? {}), mes: textarea.value };
+                        updatePreview(message);
+                    }
                     toastSuccess(`已保存第 ${index} 层`);
                     renderView();
                 } catch (error) {
+                    message = previousMessage;
+                    previewText = previousPreviewText;
+                    snippet.innerHTML = highlightHtml(buildSnippet(previewText, keyword), keyword);
                     console.error(`${LOG_PREFIX} save floor edit failed`, error);
                     save.disabled = false;
                     cancel.disabled = false;
@@ -772,14 +799,31 @@ function openFloorDirectoryDialog() {
             deleteButton.disabled = true;
             const previousHtml = deleteButton.innerHTML;
             deleteButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>删除中</span>';
+            const previousChat = chat;
+            const previousExpanded = new Set(renderState.expanded);
+            let didOptimisticDelete = false;
             try {
-                const deletedCount = await deleteFloorRangeWithSlashCommand(freshCtx, index);
+                const deletedCount = await deleteFloorRangeWithSlashCommand(freshCtx, index, {
+                    onConfirmed: () => {
+                        didOptimisticDelete = true;
+                        chat = chat.slice(0, index);
+                        renderState.expanded = new Set([...renderState.expanded].filter(id => id < index));
+                        apply(input.value);
+                    },
+                });
                 if (deletedCount > 0) {
-                    renderState.expanded = new Set([...renderState.expanded].filter(id => id < index));
+                    const latestChat = getChatArray(freshCtx);
+                    if (latestChat.length <= index) {
+                        chat = latestChat;
+                    }
                     toastSuccess(`已删除第 ${index} 层及之后 ${deletedCount} 层`);
-                    apply(input.value);
                 }
             } catch (error) {
+                if (didOptimisticDelete) {
+                    chat = previousChat;
+                    renderState.expanded = previousExpanded;
+                    apply(input.value);
+                }
                 console.error(`${LOG_PREFIX} delete floor range failed`, error);
                 toastError(`删除失败：${error?.message ?? error}`);
             } finally {
