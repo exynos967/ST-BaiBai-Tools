@@ -132,6 +132,7 @@ const PRESET_SAVE_URL = '/api/presets/save';
 const PRESET_BACKUP_SAVE_URL = '/api/plugins/baibaoku/v1/preset-backups/save';
 const PRESET_BACKUP_PREVIEW_LIST_URL = '/api/plugins/baibaoku/v1/preset-backups/save/list';
 const PRESET_BACKUP_PREVIEW_RENAME_URL = '/api/plugins/baibaoku/v1/preset-backups/save/rename';
+const PRESET_BACKUP_PREVIEW_NOTE_URL = '/api/plugins/baibaoku/v1/preset-backups/save/note';
 const PRESET_BACKUP_PREVIEW_DELETE_URL = '/api/plugins/baibaoku/v1/preset-backups/save/delete';
 const PRESET_BACKUP_PREVIEW_DOWNLOAD_URL = '/api/plugins/baibaoku/v1/preset-backups/download';
 const PRESET_CHAT_LOAD_RENDER_SUPPRESS_MS = 2000;
@@ -165,6 +166,8 @@ const FORCE_TOGGLE_PROMPTS = new Set([
 ]);
 
 const PRESET_BACKUP_PREVIEW_PAGE_SIZE = 5;
+const PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH = 500;
+const PRESET_BACKUP_PREVIEW_BATCH_DELETE_CONCURRENCY = 6;
 const PRESET_BACKUP_PREVIEW_EXPAND_ANIMATION_MS = 180;
 let presetAutoBackupBackendAvailable = true;
 
@@ -584,9 +587,17 @@ function createPresetBackupPreviewModel() {
         renameValue: '',
         renameComposing: false,
         renaming: false,
+        noteDialogOpen: false,
+        noteTarget: null,
+        noteValue: '',
+        noteComposing: false,
+        savingNote: false,
         deleteDialogOpen: false,
         deleteTarget: null,
         deleting: false,
+        selectionMode: false,
+        selectedFileNames: [],
+        batchDeleting: false,
         importingFileName: '',
         closing: false,
         animating: false,
@@ -622,6 +633,14 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                 const page = this.safePage;
                 const start = (page - 1) * PRESET_BACKUP_PREVIEW_PAGE_SIZE;
                 return this.filteredItems.slice(start, start + PRESET_BACKUP_PREVIEW_PAGE_SIZE);
+            },
+            selectedCount() {
+                return this.selectedFileNames.length;
+            },
+            pageAllSelected() {
+                const pageItems = this.pagedItems;
+
+                return pageItems.length > 0 && pageItems.every(item => this.selectedFileNames.includes(item.fileName));
             },
             displayStatus() {
                 if (this.status) {
@@ -748,12 +767,87 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                 this.status = '';
             },
             closeDeleteDialog(force = false) {
-                if (this.deleting && !force) {
+                if ((this.deleting || this.batchDeleting) && !force) {
                     return;
                 }
 
                 this.deleteDialogOpen = false;
                 this.deleteTarget = null;
+            },
+            openNoteDialog(item) {
+                if (!item || this.savingNote || this.renaming || this.deleting || this.batchDeleting || this.importingFileName) {
+                    return;
+                }
+
+                this.renameDialogOpen = false;
+                this.renameTarget = null;
+                this.deleteDialogOpen = false;
+                this.deleteTarget = null;
+                this.noteTarget = item;
+                this.noteValue = item.note || '';
+                this.noteComposing = false;
+                this.noteDialogOpen = true;
+                this.status = '';
+
+                vue.nextTick(() => {
+                    const input = this.$refs.noteInput;
+
+                    if (input instanceof HTMLTextAreaElement) {
+                        input.focus();
+                        const length = input.value.length;
+                        input.setSelectionRange(length, length);
+                    }
+                });
+            },
+            closeNoteDialog(force = false) {
+                if (this.savingNote && !force) {
+                    return;
+                }
+
+                this.noteDialogOpen = false;
+                this.noteTarget = null;
+                this.noteValue = '';
+                this.noteComposing = false;
+            },
+            onNoteInput(event) {
+                this.noteValue = String(event?.target?.value ?? '').slice(0, PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH);
+            },
+            onNoteCompositionStart() {
+                this.noteComposing = true;
+            },
+            onNoteCompositionEnd(event) {
+                this.noteComposing = false;
+                this.onNoteInput(event);
+            },
+            async confirmNote() {
+                const target = this.noteTarget;
+
+                if (!target || this.savingNote) {
+                    return;
+                }
+
+                const note = this.noteValue.trim();
+                this.savingNote = true;
+                this.status = note ? '正在保存备注...' : '正在清除备注...';
+
+                try {
+                    const updated = normalizePresetBackupPreviewItem(await updatePresetBackupPreviewNote(target.fileName, note));
+
+                    this.items = this.items.map(item => item.fileName === target.fileName
+                        ? (updated || {
+                            ...item,
+                            note,
+                            searchText: `${item.name} ${note} ${item.createdAt}`.toLowerCase(),
+                        })
+                        : item);
+                    this.status = note ? '已保存备注' : '已清除备注';
+                    this.closeNoteDialog(true);
+                } catch (error) {
+                    console.warn(`${LOG_PREFIX} Failed to update preset backup note`, error);
+                    this.status = `备注保存失败：${error?.message || '未知错误'}`;
+                } finally {
+                    this.savingNote = false;
+                }
             },
             onRenameInput(event) {
                 this.renameValue = String(event?.target?.value ?? '');
@@ -796,7 +890,7 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                         ? (updated || {
                             ...item,
                             name: formatPresetBackupPreviewDisplayName(showName),
-                            searchText: `${formatPresetBackupPreviewDisplayName(showName)} ${item.createdAt}`.toLowerCase(),
+                            searchText: `${formatPresetBackupPreviewDisplayName(showName)} ${item.note || ''} ${item.createdAt}`.toLowerCase(),
                         })
                         : item);
                     this.status = `\u5df2\u91cd\u547d\u540d\uff1a${formatPresetBackupPreviewDisplayName(showName)}`;
@@ -828,6 +922,118 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                     this.status = `\u5220\u9664\u5931\u8d25\uff1a${error?.message || '\u672a\u77e5\u9519\u8bef'}`;
                 } finally {
                     this.deleting = false;
+                }
+            },
+            toggleSelectionMode() {
+                if (this.deleting || this.batchDeleting || this.renaming || this.savingNote || this.importingFileName) {
+                    return;
+                }
+
+                this.selectionMode = !this.selectionMode;
+                this.selectedFileNames = [];
+                this.status = '';
+
+                if (this.selectionMode) {
+                    this.renameDialogOpen = false;
+                    this.noteDialogOpen = false;
+                    this.deleteDialogOpen = false;
+                }
+            },
+            exitSelectionMode() {
+                if (this.batchDeleting) {
+                    return;
+                }
+
+                this.selectionMode = false;
+                this.selectedFileNames = [];
+            },
+            toggleSelect(item) {
+                if (!item || this.batchDeleting) {
+                    return;
+                }
+
+                this.selectedFileNames = this.selectedFileNames.includes(item.fileName)
+                    ? this.selectedFileNames.filter(fileName => fileName !== item.fileName)
+                    : [...this.selectedFileNames, item.fileName];
+            },
+            toggleSelectPage() {
+                if (this.batchDeleting) {
+                    return;
+                }
+
+                const pageFileNames = this.pagedItems.map(item => item.fileName);
+
+                if (this.pageAllSelected) {
+                    this.selectedFileNames = this.selectedFileNames.filter(fileName => !pageFileNames.includes(fileName));
+                } else {
+                    const merged = new Set(this.selectedFileNames);
+                    pageFileNames.forEach(fileName => merged.add(fileName));
+                    this.selectedFileNames = Array.from(merged);
+                }
+            },
+            openBatchDeleteDialog() {
+                if (this.batchDeleting || this.selectedFileNames.length <= 0) {
+                    return;
+                }
+
+                this.deleteTarget = null;
+                this.deleteDialogOpen = true;
+                this.status = '';
+            },
+            async confirmBatchDelete() {
+                if (this.batchDeleting || this.selectedFileNames.length <= 0) {
+                    return;
+                }
+
+                // \u6279\u91cf\u5220\u9664\u590d\u7528\u5355\u6761\u5220\u9664\u63a5\u53e3\uff0c\u5bf9\u6ca1\u6709\u6279\u91cf\u63a5\u53e3\u7684\u65e7\u540e\u7aef\u5929\u7136\u517c\u5bb9\uff1b
+                // \u8fd9\u91cc\u7528\u6709\u4e0a\u9650\u7684\u5e76\u53d1\u6c60\u5e76\u53d1\u5220\u9664\uff0c\u907f\u514d\u4e00\u6b21\u9009\u5f88\u591a\u65f6\u7529\u51fa\u8fc7\u591a\u5e76\u53d1\u8bf7\u6c42\u3002
+                const targets = this.items.filter(item => this.selectedFileNames.includes(item.fileName));
+                const total = targets.length;
+                this.batchDeleting = true;
+                this.status = `\u6b63\u5728\u5220\u9664\uff1a0 / ${total}`;
+
+                let done = 0;
+                let failed = 0;
+                const failedFileNames = [];
+                const queue = targets.slice();
+
+                const worker = async () => {
+                    while (queue.length > 0) {
+                        const target = queue.shift();
+
+                        if (!target) {
+                            continue;
+                        }
+
+                        try {
+                            await deletePresetBackupPreviewItem(target.fileName);
+                            this.items = this.items.filter(item => item.fileName !== target.fileName);
+                            this.selectedFileNames = this.selectedFileNames.filter(fileName => fileName !== target.fileName);
+                            done += 1;
+                        } catch (error) {
+                            console.warn(`${LOG_PREFIX} Failed to delete preset backup in batch`, error);
+                            failed += 1;
+                            failedFileNames.push(target.fileName);
+                        }
+
+                        this.status = `\u6b63\u5728\u5220\u9664\uff1a${done + failed} / ${total}`;
+                    }
+                };
+
+                const workerCount = Math.min(PRESET_BACKUP_PREVIEW_BATCH_DELETE_CONCURRENCY, total);
+                await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+                this.batchDeleting = false;
+                this.deleteDialogOpen = false;
+                this.deleteTarget = null;
+                // \u5931\u8d25\u7684\u9879\u4fdd\u6301\u9009\u4e2d\uff0c\u65b9\u4fbf\u7528\u6237\u91cd\u8bd5\uff1b\u5168\u90e8\u6210\u529f\u624d\u9000\u51fa\u9009\u62e9\u6a21\u5f0f\u3002
+                this.selectedFileNames = failedFileNames;
+                this.status = failed > 0
+                    ? `\u5df2\u5220\u9664 ${done} \u4e2a\uff0c${failed} \u4e2a\u5931\u8d25`
+                    : `\u5df2\u5220\u9664 ${done} \u4e2a\u5907\u4efd`;
+
+                if (this.selectedFileNames.length <= 0) {
+                    this.selectionMode = false;
                 }
             },
             async importBackup(item) {
@@ -922,6 +1128,18 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                             class: {
                                 menu_button: true,
                                 menu_button_icon: true,
+                                'bai-bai-preset-backup-batch-toggle': true,
+                                'bai-bai-preset-backup-batch-active': this.selectionMode,
+                            },
+                            type: 'button',
+                            title: this.selectionMode ? '\u9000\u51fa\u6279\u91cf\u7ba1\u7406' : '\u6279\u91cf\u7ba1\u7406',
+                            disabled: this.loading || this.batchDeleting,
+                            onClick: this.toggleSelectionMode,
+                        }, [h('i', { class: 'fa-solid fa-list-check' })]),
+                        h('button', {
+                            class: {
+                                menu_button: true,
+                                menu_button_icon: true,
                                 'bai-bai-preset-backup-refresh': true,
                                 'bai-bai-preset-backup-refreshing': this.loading,
                             },
@@ -931,6 +1149,7 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                             onClick: this.refresh,
                         }, [h('i', { class: 'fa-solid fa-rotate-right' })]),
                     ]),
+                    this.selectionMode ? renderPresetBackupSelectionBar(h, this) : null,
                     h('div', { class: 'bai-bai-preset-backup-list', role: 'list' }, this.pagedItems.length
                         ? this.pagedItems.map(item => renderPresetBackupPreviewItem(h, this, item))
                         : [h('div', { class: 'bai-bai-preset-backup-empty' }, this.hasLoaded
@@ -960,6 +1179,7 @@ function createPresetBackupPreviewRootComponent(vue, model) {
                         ]),
                     ]),
                     this.renameDialogOpen ? renderPresetBackupRenameDialog(h, this) : null,
+                    this.noteDialogOpen ? renderPresetBackupNoteDialog(h, this) : null,
                     this.deleteDialogOpen ? renderPresetBackupDeleteDialog(h, this) : null,
                 ]),
             ]);
@@ -968,46 +1188,202 @@ function createPresetBackupPreviewRootComponent(vue, model) {
 }
 
 function renderPresetBackupPreviewItem(h, view, item) {
+    const selectionMode = view.selectionMode;
+    const selected = selectionMode && view.selectedFileNames.includes(item.fileName);
+
     return h('div', {
         key: item.id,
-        class: 'bai-bai-preset-backup-item',
+        class: {
+            'bai-bai-preset-backup-item': true,
+            'bai-bai-preset-backup-item-selectable': selectionMode,
+            'bai-bai-preset-backup-item-selected': selected,
+        },
         role: 'listitem',
+        onClick: selectionMode ? () => view.toggleSelect(item) : undefined,
     }, [
+        selectionMode
+            ? h('span', {
+                class: {
+                    'bai-bai-preset-backup-item-check': true,
+                    'bai-bai-preset-backup-item-check-on': selected,
+                },
+            }, [h('i', { class: selected ? 'fa-solid fa-square-check' : 'fa-regular fa-square' })])
+            : null,
         h('div', { class: 'bai-bai-preset-backup-item-main' }, [
-            h('strong', {
-                class: 'bai-bai-preset-backup-item-name',
-                title: item.name,
-            }, item.name),
-            h('small', { class: 'bai-bai-preset-backup-item-time' }, [
-                h('i', { class: 'fa-regular fa-clock' }),
-                h('span', item.createdAt),
+            h('div', { class: 'bai-bai-preset-backup-item-row bai-bai-preset-backup-item-row-top' }, [
+                h('strong', {
+                    class: 'bai-bai-preset-backup-item-name',
+                    title: item.name,
+                }, item.name),
+                selectionMode ? null : h('div', { class: 'bai-bai-preset-backup-item-actions' }, [
+                    renderPresetBackupPreviewActionButton(h, {
+                        className: 'bai-bai-preset-backup-delete',
+                        icon: 'fa-solid fa-trash',
+                        title: '\u5220\u9664\u5907\u4efd',
+                        onClick: () => view.openDeleteDialog(item),
+                    }),
+                    renderPresetBackupPreviewActionButton(h, {
+                        icon: 'fa-solid fa-pen-to-square',
+                        title: '\u91cd\u547d\u540d\u5907\u4efd',
+                        onClick: () => view.openRenameDialog(item),
+                    }),
+                    renderPresetBackupPreviewActionButton(h, {
+                        className: view.importingFileName === item.fileName ? 'bai-bai-preset-backup-importing' : '',
+                        icon: view.importingFileName === item.fileName ? 'fa-solid fa-spinner' : 'fa-solid fa-download',
+                        title: '\u5bfc\u5165\u5907\u4efd\u5e76\u5207\u6362',
+                        disabled: Boolean(view.importingFileName),
+                        onClick: () => view.importBackup(item),
+                    }),
+                ]),
+            ]),
+            h('div', { class: 'bai-bai-preset-backup-item-row bai-bai-preset-backup-item-meta' }, [
+                h('small', { class: 'bai-bai-preset-backup-item-time' }, [
+                    h('i', { class: 'fa-regular fa-clock' }),
+                    h('span', item.createdAt),
+                ]),
+                renderPresetBackupPreviewNote(h, view, item),
             ]),
         ]),
-        h('div', { class: 'bai-bai-preset-backup-item-actions' }, [
-            renderPresetBackupPreviewActionButton(h, {
-                className: 'bai-bai-preset-backup-delete',
-                icon: 'fa-solid fa-trash',
-                title: '\u5220\u9664\u5907\u4efd',
-                onClick: () => view.openDeleteDialog(item),
+    ]);
+}
+
+function renderPresetBackupSelectionBar(h, view) {
+    return h('div', { class: 'bai-bai-preset-backup-selection-bar' }, [
+        h('button', {
+            class: 'bai-bai-preset-backup-select-all',
+            type: 'button',
+            disabled: view.batchDeleting || view.pagedItems.length <= 0,
+            onClick: () => view.toggleSelectPage(),
+        }, [
+            h('i', { class: view.pageAllSelected ? 'fa-solid fa-square-check' : 'fa-regular fa-square' }),
+            h('span', view.pageAllSelected ? '\u53d6\u6d88\u672c\u9875' : '\u5168\u9009\u672c\u9875'),
+        ]),
+        h('span', { class: 'bai-bai-preset-backup-selection-count' }, `\u5df2\u9009 ${view.selectedCount} \u9879`),
+        h('div', { class: 'bai-bai-preset-backup-selection-actions' }, [
+            h('button', {
+                class: 'menu_button bai-bai-preset-backup-dialog-button',
+                type: 'button',
+                disabled: view.batchDeleting,
+                onClick: () => view.exitSelectionMode(),
+            }, '\u9000\u51fa'),
+            h('button', {
+                class: 'menu_button bai-bai-preset-backup-dialog-button bai-bai-preset-backup-dialog-danger',
+                type: 'button',
+                disabled: view.batchDeleting || view.selectedCount <= 0,
+                onClick: () => view.openBatchDeleteDialog(),
+            }, [
+                h('i', { class: 'fa-solid fa-trash' }),
+                h('span', view.batchDeleting ? '\u5220\u9664\u4e2d...' : `\u5220\u9664\u6240\u9009 (${view.selectedCount})`),
+            ]),
+        ]),
+    ]);
+}
+
+function renderPresetBackupPreviewNote(h, view, item) {
+    const hasNote = Boolean(item.note);
+    const onClick = event => {
+        if (view.selectionMode) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        view.openNoteDialog(item);
+    };
+
+    if (hasNote) {
+        return h('button', {
+            type: 'button',
+            class: 'bai-bai-preset-backup-item-note',
+            title: `${item.note}\n（点击编辑备注）`,
+            onClick,
+        }, [
+            h('i', { class: 'fa-regular fa-pen-to-square' }),
+            h('span', { class: 'bai-bai-preset-backup-item-note-text' }, item.note),
+        ]);
+    }
+
+    return h('button', {
+        type: 'button',
+        class: 'bai-bai-preset-backup-item-note bai-bai-preset-backup-item-note-empty',
+        title: '添加备注',
+        onClick,
+    }, [
+        h('i', { class: 'fa-solid fa-plus' }),
+        h('span', '备注'),
+    ]);
+}
+
+function renderPresetBackupNoteDialog(h, view) {
+    const targetName = view.noteTarget?.name || '这个备份';
+    const length = view.noteValue.length;
+
+    return h('div', {
+        class: 'bai-bai-preset-backup-dialog-layer',
+        onClick: event => {
+            if (event.target === event.currentTarget) {
+                view.closeNoteDialog();
+            }
+        },
+    }, [
+        h('div', {
+            class: 'bai-bai-preset-backup-dialog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': '编辑备注',
+            onClick: event => event.stopPropagation(),
+        }, [
+            h('div', { class: 'bai-bai-preset-backup-dialog-head' }, [
+                h('strong', '编辑备注'),
+                h('button', {
+                    class: 'menu_button menu_button_icon',
+                    type: 'button',
+                    title: '关闭',
+                    disabled: view.savingNote,
+                    onClick: () => view.closeNoteDialog(),
+                }, [h('i', { class: 'fa-solid fa-xmark' })]),
+            ]),
+            h('div', { class: 'bai-bai-preset-backup-dialog-message' }, [
+                h('span', '为'),
+                h('strong', { title: targetName }, targetName),
+                h('span', '记录这次改动'),
+            ]),
+            h('textarea', {
+                ref: 'noteInput',
+                class: 'text_pole bai-bai-preset-backup-dialog-input bai-bai-preset-backup-note-textarea',
+                rows: 4,
+                maxlength: PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH,
+                placeholder: '例如：改了正则和开场白，删了两条无用条目…',
+                autocomplete: 'off',
+                value: view.noteValue,
+                disabled: view.savingNote,
+                onInput: view.onNoteInput,
+                onCompositionstart: view.onNoteCompositionStart,
+                onCompositionend: view.onNoteCompositionEnd,
             }),
-            renderPresetBackupPreviewActionButton(h, {
-                icon: 'fa-solid fa-pen-to-square',
-                title: '\u91cd\u547d\u540d\u5907\u4efd',
-                onClick: () => view.openRenameDialog(item),
-            }),
-            renderPresetBackupPreviewActionButton(h, {
-                className: view.importingFileName === item.fileName ? 'bai-bai-preset-backup-importing' : '',
-                icon: view.importingFileName === item.fileName ? 'fa-solid fa-spinner' : 'fa-solid fa-download',
-                title: '\u5bfc\u5165\u5907\u4efd\u5e76\u5207\u6362',
-                disabled: Boolean(view.importingFileName),
-                onClick: () => view.importBackup(item),
-            }),
+            h('div', { class: 'bai-bai-preset-backup-note-counter' }, `${length} / ${PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH}`),
+            h('div', { class: 'bai-bai-preset-backup-dialog-actions' }, [
+                h('button', {
+                    class: 'menu_button bai-bai-preset-backup-dialog-button',
+                    type: 'button',
+                    disabled: view.savingNote,
+                    onClick: () => view.closeNoteDialog(),
+                }, '取消'),
+                h('button', {
+                    class: 'menu_button bai-bai-preset-backup-dialog-button',
+                    type: 'button',
+                    disabled: view.savingNote,
+                    onClick: () => view.confirmNote(),
+                }, view.savingNote ? '保存中...' : '保存'),
+            ]),
         ]),
     ]);
 }
 
 function renderPresetBackupDeleteDialog(h, view) {
+    const isBatch = !view.deleteTarget && view.selectionMode;
     const targetName = view.deleteTarget?.name || '\u8fd9\u4e2a\u5907\u4efd';
+    const busy = isBatch ? view.batchDeleting : view.deleting;
 
     return h('div', {
         class: 'bai-bai-preset-backup-dialog-layer',
@@ -1025,32 +1401,36 @@ function renderPresetBackupDeleteDialog(h, view) {
             onClick: event => event.stopPropagation(),
         }, [
             h('div', { class: 'bai-bai-preset-backup-dialog-head' }, [
-                h('strong', '\u5220\u9664\u5907\u4efd'),
+                h('strong', isBatch ? '\u6279\u91cf\u5220\u9664\u5907\u4efd' : '\u5220\u9664\u5907\u4efd'),
                 h('button', {
                     class: 'menu_button menu_button_icon',
                     type: 'button',
                     title: '\u5173\u95ed',
-                    disabled: view.deleting,
+                    disabled: busy,
                     onClick: () => view.closeDeleteDialog(),
                 }, [h('i', { class: 'fa-solid fa-xmark' })]),
             ]),
-            h('div', { class: 'bai-bai-preset-backup-dialog-message' }, [
-                h('span', '\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u4e2a\u5907\u4efd\u5417\uff1f'),
-                h('strong', { title: targetName }, targetName),
-            ]),
+            isBatch
+                ? h('div', { class: 'bai-bai-preset-backup-dialog-message' }, [
+                    h('span', `\u786e\u5b9a\u8981\u5220\u9664\u9009\u4e2d\u7684 ${view.selectedCount} \u4e2a\u5907\u4efd\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d\u3002`),
+                ])
+                : h('div', { class: 'bai-bai-preset-backup-dialog-message' }, [
+                    h('span', '\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u4e2a\u5907\u4efd\u5417\uff1f'),
+                    h('strong', { title: targetName }, targetName),
+                ]),
             h('div', { class: 'bai-bai-preset-backup-dialog-actions' }, [
                 h('button', {
                     class: 'menu_button bai-bai-preset-backup-dialog-button',
                     type: 'button',
-                    disabled: view.deleting,
+                    disabled: busy,
                     onClick: () => view.closeDeleteDialog(),
                 }, '\u53d6\u6d88'),
                 h('button', {
                     class: 'menu_button bai-bai-preset-backup-dialog-button bai-bai-preset-backup-dialog-danger',
                     type: 'button',
-                    disabled: view.deleting,
-                    onClick: () => view.confirmDelete(),
-                }, view.deleting ? '\u5220\u9664\u4e2d...' : '\u5220\u9664'),
+                    disabled: busy,
+                    onClick: () => (isBatch ? view.confirmBatchDelete() : view.confirmDelete()),
+                }, busy ? '\u5220\u9664\u4e2d...' : '\u5220\u9664'),
             ]),
         ]),
     ]);
@@ -1150,6 +1530,21 @@ async function renamePresetBackupPreviewItem(fileName, showName) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ fileName, showName }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    return payload?.data ?? payload;
+}
+
+async function updatePresetBackupPreviewNote(fileName, note) {
+    const response = await fetch(PRESET_BACKUP_PREVIEW_NOTE_URL, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ fileName, note }),
     });
 
     if (!response.ok) {
@@ -1260,13 +1655,15 @@ function normalizePresetBackupPreviewItem(item) {
         ? rawName
         : formatPresetBackupPreviewDisplayName(fileName);
     const createdAt = formatPresetBackupPreviewTime(item.createdAt ?? item.createdAtMs);
+    const note = typeof item.note === 'string' ? item.note.trim() : '';
 
     return {
         id: fileName,
         name,
         fileName,
+        note,
         createdAt,
-        searchText: `${name} ${createdAt}`.toLowerCase(),
+        searchText: `${name} ${note} ${createdAt}`.toLowerCase(),
     };
 }
 
@@ -1500,7 +1897,6 @@ function applyPresetBackupPreviewUiStyle() {
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 8px;
     min-height: 46px;
     padding: 7px 8px;
@@ -1516,24 +1912,176 @@ function applyPresetBackupPreviewUiStyle() {
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-main {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
+    flex: 1 1 auto;
     min-width: 0;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-row-top {
+    justify-content: space-between;
 }
 
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-name {
     display: block;
+    flex: 1 1 auto;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.25;
 }
 
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-meta {
+    gap: 8px;
+}
+
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-time {
     display: inline-flex;
     align-items: center;
     gap: 5px;
+    flex: 0 0 auto;
     opacity: 0.72;
     line-height: 1.2;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 1px 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: inherit;
+    font-size: 0.86em;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-note:hover {
+    background: var(--white20a, rgba(255, 255, 255, 0.08));
+    border-color: var(--SmartThemeBorderColor);
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-note i {
+    flex: 0 0 auto;
+    opacity: 0.75;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-note-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-note-empty {
+    opacity: 0.5;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-note-empty:hover {
+    opacity: 0.85;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-note-textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: calc(var(--mainFontSize) * 4.5);
+    line-height: 1.4;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-note-counter {
+    margin-top: -2px;
+    font-size: 0.8em;
+    text-align: right;
+    opacity: 0.6;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-batch-active {
+    color: var(--SmartThemeQuoteColor, #6c9eff);
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-selection-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+    margin-bottom: 2px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    background: var(--black30a, rgba(0, 0, 0, 0.12));
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    margin: 0;
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    color: inherit;
+    cursor: pointer;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-select-all:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-selection-count {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.86em;
+    opacity: 0.8;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-selection-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-selection-actions .menu_button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-selectable {
+    cursor: pointer;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-selected {
+    border-color: var(--SmartThemeQuoteColor, #6c9eff);
+    background: var(--white20a, rgba(255, 255, 255, 0.06));
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    font-size: 1.1em;
+    opacity: 0.7;
+}
+
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-check-on {
+    color: var(--SmartThemeQuoteColor, #6c9eff);
+    opacity: 1;
 }
 
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-actions {
@@ -1545,6 +2093,7 @@ function applyPresetBackupPreviewUiStyle() {
 
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-actions .menu_button,
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-refresh,
+#${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-batch-toggle,
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-pagination .menu_button,
 #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-dialog-head .menu_button {
     display: inline-flex !important;
@@ -1735,14 +2284,6 @@ function applyPresetBackupPreviewUiStyle() {
 
     #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-footer {
         gap: 6px;
-    }
-
-    #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item {
-        align-items: flex-start;
-    }
-
-    #${PRESET_BACKUP_PREVIEW_UI_ID} .bai-bai-preset-backup-item-actions {
-        padding-top: 1px;
     }
 }
 `;
