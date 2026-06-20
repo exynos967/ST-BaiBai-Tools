@@ -86,6 +86,12 @@
                                     class="checkbox">
                                 <span>管理聊天文件关闭清理</span>
                             </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_chat_loss_mitigation_enabled"
+                                title="切换正则等触发聊天重载时，若酒馆从磁盘重读聊天失败，会用问候语覆盖并导致整段聊天记录丢失。开启后会在重载前备份内存中的聊天，检测到记录被覆盖时自动恢复并重新写盘。建议保持开启。">
+                                <input id="bai_bai_toolkit_chat_loss_mitigation_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>缓解酒馆丢失聊天问题</span>
+                            </label>
                             <label class="checkbox_label"
                                 for="bai_bai_toolkit_chat_delete_edit_flow_optimization_enabled"
                                 title="用删除消息模式删楼后，允许上一层编辑区立即打开；发送、继续、冒充或重新生成前会先提交当前消息编辑。">
