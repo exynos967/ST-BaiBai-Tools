@@ -350,6 +350,12 @@
                                     class="checkbox">
                                 <span>Tokenizer 计数请求批量加速</span>
                             </label>
+                            <label class="checkbox_label" for="bai_bai_toolkit_chat_keyboard_scan_reduction_enabled"
+                                title="进入角色卡时，聊天楼层的样式变化会让 ST 反复重新扫描键盘可点元素，造成卡顿。开启后会减少这类重复扫描，明显加快进卡速度。代价：聊天楼层内的按钮无法再用键盘 Tab 键切换聚焦（鼠标点击、手机触摸完全不受影响）。绝大多数用户用不到 Tab 切换，建议保持开启。">
+                                <input id="bai_bai_toolkit_chat_keyboard_scan_reduction_enabled" type="checkbox"
+                                    class="checkbox">
+                                <span>减少酒馆键盘扫描</span>
+                            </label>
                         </div>
                     </fieldset>
                 </div>
@@ -381,8 +387,7 @@
 
                                 <label class="checkbox_label"
                                     for="bai_bai_toolkit_message_completion_sound_keep_alive_enabled"
-                                    style="align-items: center;"
-                                    title="移动端生成中循环播放静音音频，尽量降低切后台冻结导致提示音无法播放的概率；可能增加少量耗电。">
+                                    style="align-items: center;" title="移动端生成中循环播放静音音频，尽量降低切后台冻结导致提示音无法播放的概率；可能增加少量耗电。">
                                     <input id="bai_bai_toolkit_message_completion_sound_keep_alive_enabled"
                                         type="checkbox" class="checkbox">
                                     <span>生成中静音保活</span>

@@ -23,7 +23,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.27.2';
+const CURRENT_VERSION = '0.27.3';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -345,6 +345,7 @@ const defaultSettings = {
     progressiveChatLoadingEnabled: false,
     saveGenerateEnabled: true,
     tokenizerBulkCountEnabled: true,
+    chatKeyboardScanReductionEnabled: true,
     extensionManifestBundleEnabled: true,
     presetAutoBackupEnabled: true,
     characterListAvatarLazyLoadEnabled: true,
@@ -1311,6 +1312,39 @@ async function setBaibaokuTokenizerBulkCountEnabled(enabled) {
             bridge.setTokenizerBulkCountEnabled(previous);
         } else if (bridge) {
             bridge.tokenizerBulkCountEnabled = previous;
+        }
+        throw error;
+    }
+}
+
+async function setBaibaokuChatKeyboardScanReductionEnabled(enabled) {
+    const next = Boolean(enabled);
+    const previous = settings.chatKeyboardScanReductionEnabled !== false;
+    settings.chatKeyboardScanReductionEnabled = next;
+
+    const bridge = getBaibaokuEarlyBridge();
+    if (typeof bridge?.setChatKeyboardScanReductionEnabled === 'function') {
+        bridge.setChatKeyboardScanReductionEnabled(next);
+    } else if (bridge) {
+        bridge.chatKeyboardScanReductionEnabled = next;
+    }
+
+    try {
+        const saved = await saveBaibaokuFastConfig({ chatKeyboardScanReductionEnabled: next });
+        const savedEnabled = saved.chatKeyboardScanReductionEnabled !== false;
+        settings.chatKeyboardScanReductionEnabled = savedEnabled;
+        if (typeof bridge?.setChatKeyboardScanReductionEnabled === 'function') {
+            bridge.setChatKeyboardScanReductionEnabled(savedEnabled);
+        } else if (bridge) {
+            bridge.chatKeyboardScanReductionEnabled = savedEnabled;
+        }
+        return saved;
+    } catch (error) {
+        settings.chatKeyboardScanReductionEnabled = previous;
+        if (typeof bridge?.setChatKeyboardScanReductionEnabled === 'function') {
+            bridge.setChatKeyboardScanReductionEnabled(previous);
+        } else if (bridge) {
+            bridge.chatKeyboardScanReductionEnabled = previous;
         }
         throw error;
     }
@@ -3050,6 +3084,22 @@ async function renderSettingsPanel() {
             }
         });
 
+    $('#bai_bai_toolkit_chat_keyboard_scan_reduction_enabled')
+        .prop('checked', settings.chatKeyboardScanReductionEnabled !== false)
+        .on('input', async function () {
+            const checkbox = $(this);
+            checkbox.prop('disabled', true);
+            try {
+                await setBaibaokuChatKeyboardScanReductionEnabled(Boolean(checkbox.prop('checked')));
+            } catch (error) {
+                console.debug(`${LOG_PREFIX} Failed to save BaiBaoKu chat keyboard scan reduction config`, error);
+                checkbox.prop('checked', settings.chatKeyboardScanReductionEnabled !== false);
+            } finally {
+                checkbox.prop('disabled', false);
+                applyBaibaokuPanelLocalState(container);
+            }
+        });
+
     $('#bai_bai_toolkit_character_list_avatar_lazy_load_enabled')
         .prop('checked', settings.characterListAvatarLazyLoadEnabled)
         .on('input', function () {
@@ -3162,6 +3212,8 @@ function applyBaibaokuPanelLocalState(container) {
         .prop('checked', settings.presetAutoBackupEnabled !== false);
     container.find('#bai_bai_toolkit_tokenizer_bulk_count_enabled')
         .prop('checked', settings.tokenizerBulkCountEnabled !== false);
+    container.find('#bai_bai_toolkit_chat_keyboard_scan_reduction_enabled')
+        .prop('checked', settings.chatKeyboardScanReductionEnabled !== false);
 
     applyCachedBaibaokuPanelStatus(container, getBaibaokuPanelState().cache);
     applyPresetAutoBackupToggleAvailability(container, getBaibaokuPanelState().cache?.status);
@@ -3251,6 +3303,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
     const recentChatListToggle = container.find('#bai_bai_toolkit_recent_chat_list_acceleration_enabled');
     const progressiveChatLoadingToggle = container.find('#bai_bai_toolkit_progressive_chat_loading_enabled');
     const tokenizerBulkCountToggle = container.find('#bai_bai_toolkit_tokenizer_bulk_count_enabled');
+    const chatKeyboardScanReductionToggle = container.find('#bai_bai_toolkit_chat_keyboard_scan_reduction_enabled');
     const bridge = getBaibaokuEarlyBridge();
 
     updateBaibaokuStatusText(bridgeStatus, bridge?.installed
@@ -3306,6 +3359,14 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
         tokenizerBulkCountToggle.prop('checked', bridgeTokenizerBulkCountEnabled);
     }
 
+    const bridgeChatKeyboardScanReductionEnabled = typeof bridge?.isChatKeyboardScanReductionEnabled === 'function'
+        ? bridge.isChatKeyboardScanReductionEnabled()
+        : null;
+    if (typeof bridgeChatKeyboardScanReductionEnabled === 'boolean') {
+        settings.chatKeyboardScanReductionEnabled = bridgeChatKeyboardScanReductionEnabled;
+        chatKeyboardScanReductionToggle.prop('checked', bridgeChatKeyboardScanReductionEnabled);
+    }
+
     updateBaibaokuStatusText(serverStatus, '检测中', null);
     updateBaibaokuStatusText(driverStatus, '检测中', null);
 
@@ -3336,6 +3397,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
             const recentChatListEnabled = config.recentChatListAccelerationEnabled !== false;
             const progressiveChatLoadingEnabled = false;
             const tokenizerBulkCountEnabled = config.tokenizerBulkCountEnabled !== false;
+            const chatKeyboardScanReductionEnabled = config.chatKeyboardScanReductionEnabled !== false;
             panelState.cache = {
                 ...(panelState.cache || {}),
                 config,
@@ -3349,6 +3411,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
             settings.recentChatListAccelerationEnabled = recentChatListEnabled;
             settings.progressiveChatLoadingEnabled = progressiveChatLoadingEnabled;
             settings.tokenizerBulkCountEnabled = tokenizerBulkCountEnabled;
+            settings.chatKeyboardScanReductionEnabled = chatKeyboardScanReductionEnabled;
             accelerationToggle.prop('checked', settingsEnabled);
             lazyThemeLoadingToggle.prop('checked', lazyThemeLoadingEnabled);
             extensionManifestBundleToggle.prop('checked', extensionManifestBundleEnabled);
@@ -3356,6 +3419,7 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
             recentChatListToggle.prop('checked', recentChatListEnabled);
             progressiveChatLoadingToggle.prop('checked', false).prop('disabled', true);
             tokenizerBulkCountToggle.prop('checked', tokenizerBulkCountEnabled);
+            chatKeyboardScanReductionToggle.prop('checked', chatKeyboardScanReductionEnabled);
             applyFastChatGetOptimization();
             if (typeof bridge?.setSettingsAccelerationEnabled === 'function') {
                 bridge.setSettingsAccelerationEnabled(settingsEnabled);
@@ -3389,6 +3453,11 @@ async function refreshBaibaokuPanelStatus(container, { force = false } = {}) {
                 bridge.setTokenizerBulkCountEnabled(tokenizerBulkCountEnabled);
             } else if (bridge) {
                 bridge.tokenizerBulkCountEnabled = tokenizerBulkCountEnabled;
+            }
+            if (typeof bridge?.setChatKeyboardScanReductionEnabled === 'function') {
+                bridge.setChatKeyboardScanReductionEnabled(chatKeyboardScanReductionEnabled);
+            } else if (bridge) {
+                bridge.chatKeyboardScanReductionEnabled = chatKeyboardScanReductionEnabled;
             }
         } catch (error) {
             console.debug(`${LOG_PREFIX} Failed to read BaiBaoKu fast config`, error);
