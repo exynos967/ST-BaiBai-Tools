@@ -197,6 +197,7 @@ export function installOpenAITokenizerBulkBridge() {
     bridge.installed = true;
     bridge.version = '0.1';
     bridge.prepareOpenAIMessages = prepareOpenAITokenizerBulkMessages;
+    bridge.prepareWorldInfoBudgetCounts = prepareOpenAITokenizerWorldInfoBudgetCounts;
     bridge.clear = () => state.cache.clear();
     bridge.getStats = () => ({ ...state.stats, cacheSize: state.cache.size });
     bridge.isEnabled = isOpenAITokenizerBulkEnabled;
@@ -13126,9 +13127,13 @@ function getOpenAITokenizerBulkState() {
             ajaxMisses: 0,
             ajaxFallbacks: 0,
             ajaxErrors: 0,
+            worldInfoPrepareCalls: 0,
+            worldInfoPrepareMessages: 0,
+            worldInfoPrepareEmpty: 0,
+            worldInfoPrepareErrors: 0,
         };
     }
-    for (const key of ['prepareCalls', 'prepareMessages', 'prepareEmpty', 'prepareErrors', 'ajaxBatches', 'ajaxBatchMessages', 'ajaxHits', 'ajaxMisses', 'ajaxFallbacks', 'ajaxErrors']) {
+    for (const key of ['prepareCalls', 'prepareMessages', 'prepareEmpty', 'prepareErrors', 'ajaxBatches', 'ajaxBatchMessages', 'ajaxHits', 'ajaxMisses', 'ajaxFallbacks', 'ajaxErrors', 'worldInfoPrepareCalls', 'worldInfoPrepareMessages', 'worldInfoPrepareEmpty', 'worldInfoPrepareErrors']) {
         if (typeof state.stats[key] !== 'number') {
             state.stats[key] = 0;
         }
@@ -13433,6 +13438,120 @@ async function prepareOpenAITokenizerBulkMessages(context = {}) {
 
     state.pending = pending;
     return pending;
+}
+
+async function prepareOpenAITokenizerWorldInfoBudgetCounts(context = {}) {
+    const state = getOpenAITokenizerBulkState();
+    state.stats.worldInfoPrepareCalls += 1;
+
+    if (!isOpenAITokenizerBulkEnabled()) {
+        return false;
+    }
+
+    const model = getTokenizerModel();
+    const messages = collectOpenAITokenizerWorldInfoBudgetMessages(context);
+    const uniqueMessages = [];
+    const seen = new Set();
+    const keyCache = new Map();
+
+    for (const message of messages) {
+        const key = getOpenAITokenizerCacheKey(model, message, keyCache);
+        if (seen.has(key) || state.cache.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        uniqueMessages.push({ key, message });
+    }
+
+    if (uniqueMessages.length === 0) {
+        state.stats.worldInfoPrepareEmpty += 1;
+        return true;
+    }
+
+    const pending = fetchOpenAITokenizerBulkCounts(model, uniqueMessages)
+        .then(counts => {
+            counts.forEach((count, index) => {
+                setOpenAITokenizerBulkCache(uniqueMessages[index].key, count);
+            });
+            state.stats.worldInfoPrepareMessages += uniqueMessages.length;
+            return true;
+        })
+        .catch(error => {
+            state.stats.worldInfoPrepareErrors += 1;
+            throw error;
+        })
+        .finally(() => {
+            if (state.pending === pending) {
+                state.pending = null;
+            }
+        });
+
+    state.pending = pending;
+    return pending;
+}
+
+function collectOpenAITokenizerWorldInfoBudgetMessages(context = {}) {
+    const texts = [];
+    const seenTexts = new Set();
+    const addText = (text) => {
+        if (texts.length >= OPENAI_TOKENIZER_BULK_PREPARE_MAX_MESSAGES) {
+            return false;
+        }
+
+        if (typeof text !== 'string' || text.length === 0 || seenTexts.has(text)) {
+            return true;
+        }
+
+        seenTexts.add(text);
+        texts.push(text);
+        return true;
+    };
+
+    addText(context.textToScan);
+
+    let states = [''];
+    const entries = Array.isArray(context.entries) ? context.entries : [];
+    for (const entry of entries) {
+        if (texts.length >= OPENAI_TOKENIZER_BULK_PREPARE_MAX_MESSAGES) {
+            break;
+        }
+
+        const content = typeof entry?.content === 'string' ? entry.content : '';
+        const nextStates = [];
+        const seenStates = new Set();
+        const pushState = (value) => {
+            if (seenStates.has(value)) {
+                return;
+            }
+            seenStates.add(value);
+            nextStates.push(value);
+        };
+
+        if (entry?.maySkip) {
+            for (const state of states) {
+                pushState(state);
+            }
+        }
+
+        for (const state of states) {
+            pushState(`${state}${content}\n`);
+        }
+
+        states = nextStates.slice(0, OPENAI_TOKENIZER_BULK_PREPARE_MAX_MESSAGES);
+
+        if (!entry?.ignoreBudget) {
+            for (const state of states) {
+                if (!addText(state)) {
+                    break;
+                }
+            }
+        }
+    }
+
+    return texts
+        .map(text => normalizeOpenAITokenizerMessage({ role: 'system', content: text }, { allowEmptyContent: true }))
+        .filter(Boolean);
 }
 
 async function collectOpenAITokenizerBulkMessages(context) {
