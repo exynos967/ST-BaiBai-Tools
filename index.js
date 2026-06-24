@@ -23,7 +23,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.27.7';
+const CURRENT_VERSION = '0.27.8';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -91,6 +91,7 @@ const PERFORMANCE_TRACE_FETCH_KEY = '__baiBaiToolkitPerformanceTraceFetchPatched
 const TRANSLATE_MESSAGE_UPDATED_OPTIMIZATION_KEY = '__baiBaiToolkitTranslateMessageUpdatedOptimized';
 const CUSTOM_CSS_INPUT_OPTIMIZATION_KEY = '__baiBaiToolkitCustomCssInputOptimized';
 const CUSTOM_CSS_CODEMIRROR_EDITOR_KEY = '__baiBaiToolkitCustomCssCodeMirrorEditor';
+const PAGE_RESTORE_SELECTION_GUARD_KEY = '__baiBaiToolkitPageRestoreSelectionGuard';
 const DESCRIPTION_CODEMIRROR_EDITOR_STYLE_ID = 'bai_bai_toolkit_description_codemirror_editor_style';
 const CUSTOM_CSS_CODEMIRROR_EDITOR_STYLE_ID = 'bai_bai_toolkit_custom_css_codemirror_editor_style';
 const DESCRIPTION_CODEMIRROR_EDITOR_KEY = '__baiBaiToolkitDescriptionCodeMirrorEditor';
@@ -439,6 +440,7 @@ installSaveRequestGzipFetchHook();
 installPerformanceTraceFetchHook();
 installSaveGenerateFetchHook();
 installReloadGreetingGuard();
+installPageRestoreSelectionGuard();
 chatOptimizations.observeChatManagementPopupCleanup();
 applyFeatureSettings();
 jQuery(renderSettingsPanel);
@@ -450,6 +452,64 @@ function getExtensionState() {
     }
 
     return globalThis[EXTENSION_KEY];
+}
+
+function installPageRestoreSelectionGuard() {
+    if (extensionState[PAGE_RESTORE_SELECTION_GUARD_KEY]) {
+        return;
+    }
+
+    const handler = (event) => {
+        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+            return;
+        }
+
+        clearNonEditableTextSelectionForPageRestore();
+    };
+
+    document.addEventListener('visibilitychange', handler, true);
+    window.addEventListener('pagehide', handler, true);
+    extensionState[PAGE_RESTORE_SELECTION_GUARD_KEY] = { handler };
+}
+
+function clearNonEditableTextSelectionForPageRestore() {
+    const selection = typeof document.getSelection === 'function' ? document.getSelection() : null;
+
+    if (!selection || selection.rangeCount === 0) {
+        return;
+    }
+
+    const anchor = getSelectionElement(selection.anchorNode);
+    const focus = getSelectionElement(selection.focusNode);
+
+    if (isEditableSelectionElement(anchor) || isEditableSelectionElement(focus)) {
+        return;
+    }
+
+    try {
+        selection.removeAllRanges();
+    } catch {
+        // Selection cleanup is best effort; page restore should never depend on it.
+    }
+}
+
+function getSelectionElement(node) {
+    if (node instanceof Element) {
+        return node;
+    }
+
+    return node?.parentElement instanceof Element ? node.parentElement : null;
+}
+
+function isEditableSelectionElement(element) {
+    if (!(element instanceof HTMLElement)) {
+        return false;
+    }
+
+    return Boolean(
+        element.isContentEditable
+        || element.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
+    );
 }
 
 function getLocalAssetVersion(fallback = 'dev') {
@@ -3845,7 +3905,11 @@ function installCustomCssInputOptimization() {
             flushCustomCssApply();
         }
     };
-    const pageLifecycleHandler = () => {
+    const pageLifecycleHandler = (event) => {
+        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+            return;
+        }
+
         flushCurrentCustomCssInput();
     };
 
@@ -4046,7 +4110,11 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
             scheduleCustomCssCodeMirrorEditorRefresh(state);
         }
     };
-    const pageLifecycleHandler = () => {
+    const pageLifecycleHandler = (event) => {
+        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+            return;
+        }
+
         flushCustomCssCodeMirrorEditor('page lifecycle', { apply: true, save: true });
     };
 
