@@ -23,7 +23,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.27.10';
+const CURRENT_VERSION = '0.27.11';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -365,7 +365,7 @@ const defaultSettings = {
     presetScrollOptimizationEnabled: true,
     presetDragOptimizationEnabled: true,
     presetVueDragLocked: false,
-    presetMobileWholeRowDragEnabled: false,
+    presetMobileWholeRowDragEnabled: true,
     presetSwitchOptimizationEnabled: true,
     presetToggleOptimizationEnabled: true,
     presetGroupingEnabled: true,
@@ -385,6 +385,14 @@ const defaultSettings = {
     messageCompletionSoundLocalFileName: '',
     messageCompletionSoundKeepAliveEnabled: true,
 };
+const linkedPresetOptimizationSettingKeys = [
+    'presetScrollOptimizationEnabled',
+    'presetDragOptimizationEnabled',
+    'presetMobileWholeRowDragEnabled',
+    'presetSwitchOptimizationEnabled',
+    'presetToggleOptimizationEnabled',
+    'presetGroupingEnabled',
+];
 const legacySettingsKeys = [
     'textareaScrollOptimizationEnabled',
     'descriptionShadowEditorEnabled',
@@ -607,9 +615,15 @@ function initializeSettings() {
 
     Object.assign(settings, defaultSettings, extension_settings[SETTINGS_KEY]);
     delete settings[SAVE_GENERATE_DEFAULT_ENABLED_MIGRATION_KEY];
+    const normalizedPresetLinkedOptimizationSettings = normalizeLinkedPresetOptimizationSettings();
     const normalizedMessageEditClickSetting = normalizeMessageEditClickSettings();
 
-    if (removedLegacySetting || migratedSaveGenerateDefault || normalizedMessageEditClickSetting) {
+    if (
+        removedLegacySetting
+        || migratedSaveGenerateDefault
+        || normalizedPresetLinkedOptimizationSettings
+        || normalizedMessageEditClickSetting
+    ) {
         saveSettingsDebounced();
     }
 }
@@ -1454,6 +1468,21 @@ function normalizeMessageEditClickSettings() {
     }
 
     return false;
+}
+
+function normalizeLinkedPresetOptimizationSettings() {
+    const enabled = linkedPresetOptimizationSettingKeys.some(key => settings[key] === true);
+    let changed = false;
+
+    for (const key of linkedPresetOptimizationSettingKeys) {
+        if (settings[key] !== enabled) {
+            settings[key] = enabled;
+            extension_settings[SETTINGS_KEY][key] = enabled;
+            changed = true;
+        }
+    }
+
+    return changed;
 }
 
 function saveExtensionSettings() {
