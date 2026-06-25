@@ -51,6 +51,7 @@ const PRESET_CONTEXT_TOKEN_REFRESH_KEY = '__baiBaiToolkitPresetContextTokenRefre
 const PRESET_GROUP_PRESET_DELETED_HANDLER_KEY = '__baiBaiToolkitPresetGroupPresetDeletedHandler';
 const PRESET_GROUP_PRESET_IMPORT_HANDLER_KEY = '__baiBaiToolkitPresetGroupPresetImportHandler';
 const PRESET_GROUP_PRESET_RENAMED_HANDLER_KEY = '__baiBaiToolkitPresetGroupPresetRenamedHandler';
+const PRESET_AUTO_BACKUP_RENAME_HANDLER_KEY = '__baiBaiToolkitPresetAutoBackupRenameHandler';
 const PRESET_SELECT_CHANGE_HANDLER_KEY = '__baiBaiToolkitPresetSelectChangeHandler';
 const PRESET_DELETE_HANDLER_KEY = '__baiBaiToolkitPresetDeleteHandler';
 const PRESET_LIST_ACTION_HANDLER_KEY = '__baiBaiToolkitPresetListActionHandler';
@@ -344,6 +345,26 @@ function dispatchDescriptionEditorSourceInput(source) {
 
 function applyPresetAutoBackup() {
     installPresetAutoBackupFetchHook();
+    installPresetRenameBackupSuppressionListener();
+}
+
+// 独立监听 PRESET_RENAMED_BEFORE 来开启备份抑制窗口,只依赖自动备份本身是否可用,
+// 与分组开关解耦(分组关闭、仅装了后端柏宝库时也能去重)。窗口关闭由 update guard 驱动。
+function installPresetRenameBackupSuppressionListener() {
+    if (extensionState[PRESET_AUTO_BACKUP_RENAME_HANDLER_KEY] || !event_types.PRESET_RENAMED_BEFORE) {
+        return;
+    }
+
+    const handler = (event) => {
+        if (event?.apiId !== 'openai' || !event.oldName || !event.newName) {
+            return;
+        }
+
+        beginPresetRenameBackupSuppression();
+    };
+
+    extensionState[PRESET_AUTO_BACKUP_RENAME_HANDLER_KEY] = handler;
+    eventSource.on(event_types.PRESET_RENAMED_BEFORE, handler);
 }
 
 function setPresetAutoBackupBackendAvailable(available) {
@@ -375,7 +396,10 @@ function installPresetAutoBackupFetchHook() {
 
     state.wrappedFetch = function baiBaiToolkitPresetAutoBackupFetch(input, init) {
         if (state.isEnabled() && isPresetAutoBackupSourceRequest(input, init)) {
-            if (state.skipCount > 0) {
+            if (state.renameSuppress) {
+                // 重命名进行中:不立即备份,只同步记住最后一次保存内容,窗口关闭时再补一次。
+                capturePresetRenameBackupBodySync(state, input, init);
+            } else if (state.skipCount > 0) {
                 state.skipCount -= 1;
             } else {
                 void schedulePresetAutoBackupFromRequest(state, input, init);
@@ -426,6 +450,10 @@ async function schedulePresetAutoBackupFromRequest(state, input, init) {
         return;
     }
 
+    await sendPresetAutoBackup(state, body);
+}
+
+async function sendPresetAutoBackup(state, body) {
     try {
         await state.originalFetch(PRESET_BACKUP_SAVE_URL, {
             method: 'POST',
@@ -435,6 +463,60 @@ async function schedulePresetAutoBackupFromRequest(state, input, init) {
     } catch (error) {
         console.debug(`${LOG_PREFIX} Failed to create preset auto backup`, error);
     }
+}
+
+// 重命名期间会连续触发多次 /api/presets/save(ST 的"先建空预设→写回扩展→update 落盘"流程)。
+// 这里开一个抑制窗口:窗口内不逐次备份,只同步记住最后一次保存的内容;窗口由事件关闭
+// (update 收尾 click,见 installPresetUpdatePendingChangesGuard),关闭时只补一次最终结果备份。
+// 全程不依赖定时器。
+function beginPresetRenameBackupSuppression() {
+    const state = installPresetAutoBackupFetchHook();
+
+    if (!state) {
+        return;
+    }
+
+    state.renameSuppress = { lastBody: null };
+}
+
+// 同步记录本次保存内容。重命名期间的所有 /save 的 init.body 都是 JSON 字符串,可直接解析。
+function capturePresetRenameBackupBodySync(state, input, init) {
+    if (!state.renameSuppress) {
+        return;
+    }
+
+    let body = null;
+
+    try {
+        const raw = init && typeof init.body === 'string' ? init.body : null;
+        body = raw ? JSON.parse(raw) : null;
+    } catch {
+        body = null;
+    }
+
+    if (isPresetAutoBackupBody(body)) {
+        state.renameSuppress.lastBody = body;
+    }
+}
+
+// 关闭抑制窗口并补一次最终结果备份。幂等:重复调用时窗口已关,直接返回。
+function flushPresetRenameBackup() {
+    const state = globalThis[PRESET_AUTO_BACKUP_FETCH_KEY];
+
+    if (!state?.renameSuppress) {
+        return;
+    }
+
+    const body = state.renameSuppress.lastBody;
+    state.renameSuppress = null;
+
+    if (state.isEnabled() && isPresetAutoBackupBody(body)) {
+        void sendPresetAutoBackup(state, body);
+    }
+}
+
+function isPresetRenameInProgress() {
+    return Boolean(globalThis[PRESET_AUTO_BACKUP_FETCH_KEY]?.renameSuppress);
 }
 
 function isPresetAutoBackupBody(body) {
@@ -2445,6 +2527,18 @@ function installPresetUpdatePendingChangesGuard() {
             : null;
 
         if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        // 重命名收尾:ST 的 update 点击(jQuery 处理器)已同步把完整 oai_settings 落盘,此时
+        // 抑制窗口里记下的就是最终内容。补一次备份并关闭窗口;同时拦掉这次原生 re-click 的
+        // 多余重复提交,清理 pending,避免再发一次预设保存。全程由事件驱动,不依赖定时器。
+        // 放在 bypass 判断之前,确保任何到达此处的 update click 都能可靠关闭抑制窗口(幂等)。
+        if (isPresetRenameInProgress()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            flushPresetRenameBackup();
+            clearPendingPresetPromptChangesForPreset(oai_settings?.preset_settings_openai);
             return;
         }
 
