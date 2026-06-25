@@ -8196,6 +8196,31 @@ function getPresetGlobalLibraryDialogHost() {
         || document.body;
 }
 
+function isPresetGlobalLibraryDialogOpen() {
+    return (extensionState.presetGlobalLibraryDialogOpenCount ?? 0) > 0;
+}
+
+function beginPresetGlobalLibraryDialogOpen() {
+    extensionState.presetGlobalLibraryDialogOpenCount = (extensionState.presetGlobalLibraryDialogOpenCount ?? 0) + 1;
+}
+
+function endPresetGlobalLibraryDialogOpen() {
+    const next = (extensionState.presetGlobalLibraryDialogOpenCount ?? 0) - 1;
+    extensionState.presetGlobalLibraryDialogOpenCount = Math.max(0, next);
+
+    if (extensionState.presetGlobalLibraryDialogOpenCount > 0) {
+        return;
+    }
+
+    if (extensionState.presetPromptListRebuildDeferredByDialog) {
+        extensionState.presetPromptListRebuildDeferredByDialog = false;
+
+        if (settings.presetSwitchOptimizationEnabled && isPromptManagerReadyForFastPresetSwitch()) {
+            void renderPromptManagerListWithoutTokenStats();
+        }
+    }
+}
+
 function shouldAutoFocusPresetGlobalLibraryDialog() {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
         return true;
@@ -8270,6 +8295,8 @@ function showPresetGlobalLibraryDialog({
         return Promise.resolve(null);
     }
 
+    beginPresetGlobalLibraryDialogOpen();
+
     return new Promise(resolve => {
         const values = {};
         const previousHostPosition = host.style.position;
@@ -8285,7 +8312,13 @@ function showPresetGlobalLibraryDialog({
         const confirmButton = document.createElement('span');
         let updateDialogLayerBounds = null;
 
+        let cleanedUp = false;
         const cleanup = result => {
+            if (cleanedUp) {
+                return;
+            }
+            cleanedUp = true;
+            endPresetGlobalLibraryDialogOpen();
             document.removeEventListener('keydown', handleKeydown, true);
 
             if (updateDialogLayerBounds) {
@@ -12523,6 +12556,13 @@ function applyPromptManagerPresetFieldsEarly(preset) {
 }
 
 async function renderPromptManagerListWithoutTokenStats() {
+    if (isPresetGlobalLibraryDialogOpen()) {
+        // 全局库弹窗挂在 #completion_prompt_manager 容器内,而 promptManager.renderPromptManager()
+        // 会清空该容器,会把正在编辑/选择的弹窗一起删掉。弹窗打开期间推迟重建,关闭后补一次。
+        extensionState.presetPromptListRebuildDeferredByDialog = true;
+        return;
+    }
+
     installPresetVuePromptListRenderPatch();
     const scrollContainer = promptManager.containerElement.closest('.scrollableInner');
     const scrollTop = scrollContainer?.scrollTop;
