@@ -4019,21 +4019,80 @@ function preparePromptManagerCustomDragList(
     return true;
 }
 
-function syncPresetVuePromptListGapVariable(list) {
-    if (!(list instanceof HTMLElement)) {
-        return;
-    }
-
+function readPresetVuePromptListGapValue(list) {
     const styles = getComputedStyle(list);
     const gap = styles.rowGap && styles.rowGap !== 'normal'
         ? styles.rowGap
         : styles.gap;
 
-    if (gap && gap !== 'normal') {
+    return gap && gap !== 'normal' ? gap : '';
+}
+
+function applyPresetVuePromptListGapValue(list, gap) {
+    if (!(list instanceof HTMLElement)) {
+        return;
+    }
+
+    if (gap) {
         list.style.setProperty(PRESET_VUE_LIST_GAP_VARIABLE, gap);
     } else {
         list.style.removeProperty(PRESET_VUE_LIST_GAP_VARIABLE);
     }
+}
+
+function syncPresetVuePromptListGapVariable(list) {
+    if (!(list instanceof HTMLElement)) {
+        return;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+
+    // Cache hit: the gap only changes on theme/font edits (rare, off the hot path),
+    // so reuse the last measured value and just write the CSS variable. This write
+    // does not force a synchronous layout, so the per-render reflow is eliminated.
+    if (manager.cachedListGapList === list && manager.cachedListGap !== null) {
+        applyPresetVuePromptListGapValue(list, manager.cachedListGap);
+        return;
+    }
+
+    // Cache miss: defer the getComputedStyle read to the next animation frame.
+    // Layout already runs at that point, so reading the gap there piggybacks on
+    // it instead of triggering an extra forced reflow inside the render path.
+    if (manager.listGapReadFrame !== null || typeof requestAnimationFrame !== 'function') {
+        // No rAF available (or one already queued): fall back to an immediate read once.
+        if (typeof requestAnimationFrame !== 'function') {
+            const gap = readPresetVuePromptListGapValue(list);
+            manager.cachedListGap = gap;
+            manager.cachedListGapList = list;
+            applyPresetVuePromptListGapValue(list, gap);
+        }
+        return;
+    }
+
+    manager.listGapReadFrame = requestAnimationFrame(() => {
+        manager.listGapReadFrame = null;
+
+        if (!(list instanceof HTMLElement) || !list.isConnected) {
+            return;
+        }
+
+        const gap = readPresetVuePromptListGapValue(list);
+        manager.cachedListGap = gap;
+        manager.cachedListGapList = list;
+        applyPresetVuePromptListGapValue(list, gap);
+    });
+}
+
+function invalidatePresetVuePromptListGapCache() {
+    const manager = getPresetVuePromptListManagerState();
+    manager.cachedListGap = null;
+    manager.cachedListGapList = null;
+
+    if (manager.listGapReadFrame !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(manager.listGapReadFrame);
+    }
+
+    manager.listGapReadFrame = null;
 }
 
 function clearPromptManagerCustomDragList() {
@@ -4044,6 +4103,7 @@ function clearPromptManagerCustomDragList() {
     }
 
     list.classList.remove(PRESET_DRAG_READY_CLASS, PRESET_DRAG_ACTIVE_CLASS);
+    invalidatePresetVuePromptListGapCache();
 }
 
 function disablePromptManagerStockSortable(list) {
@@ -4199,6 +4259,7 @@ function unmountPresetVuePromptListApp(manager = getPresetVuePromptListManagerSt
     manager.lastRenderPatchSyncCycle = 0;
     manager.dragPreparedList = null;
     manager.dragPreparedSignature = '';
+    invalidatePresetVuePromptListGapCache();
 }
 
 function getPresetVuePromptListManagerState() {
@@ -4264,6 +4325,9 @@ function getPresetVuePromptListManagerState() {
             lastRenderPatchSyncCycle: 0,
             dragPreparedList: null,
             dragPreparedSignature: '',
+            cachedListGap: null,
+            cachedListGapList: null,
+            listGapReadFrame: null,
         };
     }
 
