@@ -184,6 +184,8 @@ const DESCRIPTION_CODEMIRROR_LOCAL_BUNDLE_PATH = './vendor/codemirror.bundle.js'
 const CUSTOM_CSS_INPUT_ID = 'customCSS';
 const CUSTOM_CSS_MAXIMIZED_SOURCE_SELECTOR = 'textarea.maximized_textarea[data-for="customCSS"]';
 const CUSTOM_CSS_STYLE_ID = 'custom-style';
+const CUSTOM_CSS_HOST_SELECTOR = '#CustomCSS-textAreaBlock';
+const CUSTOM_CSS_SETTINGS_PANEL_SELECTOR = '#UI-Customization';
 const CUSTOM_CSS_CODEMIRROR_EDITOR_ID = 'bai_bai_custom_css_codemirror_editor';
 const CUSTOM_CSS_CODEMIRROR_EDITOR_CLASS = 'bai-bai-toolkit-custom-css-codemirror-editor';
 const CUSTOM_CSS_SOURCE_HIDDEN_CLASS = 'bai-bai-toolkit-custom-css-source-hidden';
@@ -4086,12 +4088,14 @@ function getCustomCssCodeMirrorEditorState() {
             listeners: [],
             globalListeners: [],
             mutationObserver: null,
+            mutationObserverTargets: [],
             refreshFrame: 0,
             dirty: false,
             flushing: false,
             syncingFromSource: false,
             loadingToken: null,
             colorScheme: 'light',
+            colorSchemeDirty: true,
         };
     }
 
@@ -4134,7 +4138,7 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
 
         if (target.closest(`.editor_maximize[data-for="${CUSTOM_CSS_INPUT_ID}"]`)) {
             flushCustomCssCodeMirrorEditor('maximize click', { apply: true, save: true });
-            scheduleCustomCssCodeMirrorEditorRefresh(state);
+            scheduleCustomCssCodeMirrorEditorRefresh(state, { colorSchemeDirty: true });
         }
     };
     const pageLifecycleHandler = (event) => {
@@ -4157,24 +4161,159 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
 }
 
 function installCustomCssCodeMirrorEditorMutationObserver(state) {
-    if (state.mutationObserver || typeof MutationObserver !== 'function') {
+    if (typeof MutationObserver !== 'function') {
         return;
     }
 
-    const root = document.body || document.documentElement;
+    if (!state.mutationObserver) {
+        state.mutationObserver = new MutationObserver((mutations) => {
+            if (areCustomCssCodeMirrorMutationsInternal(state, mutations)
+                || !shouldCustomCssCodeMirrorRefreshForMutations(state, mutations)) {
+                return;
+            }
 
-    if (!root) {
+            scheduleCustomCssCodeMirrorEditorRefresh(state, { colorSchemeDirty: true });
+        });
+    }
+
+    bindCustomCssCodeMirrorEditorMutationObserver(state);
+}
+
+function bindCustomCssCodeMirrorEditorMutationObserver(state) {
+    if (!state?.mutationObserver) {
         return;
     }
 
-    state.mutationObserver = new MutationObserver((mutations) => {
-        if (areCustomCssCodeMirrorMutationsInternal(state, mutations)) {
+    const targets = getCustomCssCodeMirrorMutationTargets(state);
+    const currentTargets = state.mutationObserverTargets || [];
+    const unchanged = currentTargets.length === targets.length
+        && currentTargets.every((current, index) => current.target === targets[index].target && current.optionsKey === targets[index].optionsKey);
+
+    if (unchanged) {
+        return;
+    }
+
+    state.mutationObserver.disconnect();
+
+    for (const { target, options } of targets) {
+        state.mutationObserver.observe(target, options);
+    }
+
+    state.mutationObserverTargets = targets;
+}
+
+function getCustomCssCodeMirrorMutationTargets(state) {
+    const targetMap = new Map();
+    const hostOptions = {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'hidden', 'data-for'],
+        childList: true,
+        subtree: true,
+    };
+    const parentOptions = {
+        childList: true,
+        subtree: false,
+    };
+
+    const addTarget = (target, optionsKey, options) => {
+        if (!(target instanceof Node) || !target.isConnected) {
             return;
         }
 
-        scheduleCustomCssCodeMirrorEditorRefresh(state);
+        const existing = targetMap.get(target);
+
+        if (!existing || existing.optionsKey === 'parent') {
+            targetMap.set(target, { target, optionsKey, options });
+        }
+    };
+
+    const addLocalRootsForElement = (element) => {
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
+
+        addTarget(element.parentElement, 'host', hostOptions);
+        addTarget(element.parentElement?.parentElement, 'parent', parentOptions);
+
+        const popup = element.closest('dialog.popup');
+        addTarget(popup, 'host', hostOptions);
+        addTarget(popup?.parentElement, 'parent', parentOptions);
+    };
+
+    const liveSource = getCustomCssCodeMirrorSource();
+    const host = document.querySelector(CUSTOM_CSS_HOST_SELECTOR);
+    const settingsPanel = document.querySelector(CUSTOM_CSS_SETTINGS_PANEL_SELECTOR);
+
+    addLocalRootsForElement(liveSource);
+    addLocalRootsForElement(state.source);
+    addLocalRootsForElement(state.wrapper);
+
+    if (host instanceof HTMLElement) {
+        addTarget(host, 'host', hostOptions);
+        addTarget(host.parentElement, 'parent', parentOptions);
+    } else if (settingsPanel instanceof HTMLElement) {
+        addTarget(settingsPanel, 'host', hostOptions);
+        addTarget(settingsPanel.parentElement, 'parent', parentOptions);
+    }
+
+    if (!targetMap.size) {
+        addTarget(document.body || document.documentElement, 'parent', parentOptions);
+    }
+
+    return [...targetMap.values()];
+}
+
+function shouldCustomCssCodeMirrorRefreshForMutations(state, mutations) {
+    return mutations.some((mutation) => {
+        if (isCustomCssCodeMirrorRelevantMutationNode(state, mutation.target)) {
+            return true;
+        }
+
+        for (const node of mutation.addedNodes) {
+            if (isCustomCssCodeMirrorRelevantMutationNode(state, node)) {
+                return true;
+            }
+        }
+
+        for (const node of mutation.removedNodes) {
+            if (isCustomCssCodeMirrorRelevantMutationNode(state, node)) {
+                return true;
+            }
+        }
+
+        return false;
     });
-    state.mutationObserver.observe(root, { childList: true, subtree: true });
+}
+
+function isCustomCssCodeMirrorRelevantMutationNode(state, node) {
+    if (!(node instanceof Element)) {
+        return false;
+    }
+
+    if (node.id === CUSTOM_CSS_INPUT_ID
+        || node.id === CUSTOM_CSS_CODEMIRROR_EDITOR_ID
+        || node.matches(CUSTOM_CSS_HOST_SELECTOR)
+        || node.matches(CUSTOM_CSS_SETTINGS_PANEL_SELECTOR)
+        || node.matches(CUSTOM_CSS_MAXIMIZED_SOURCE_SELECTOR)) {
+        return true;
+    }
+
+    if (state.source instanceof HTMLElement
+        && (node === state.source || node.contains(state.source) || state.source.contains(node))) {
+        return true;
+    }
+
+    if (state.wrapper instanceof HTMLElement
+        && (node === state.wrapper || node.contains(state.wrapper) || state.wrapper.contains(node))) {
+        return true;
+    }
+
+    return Boolean(node.querySelector?.([
+        `#${CUSTOM_CSS_INPUT_ID}`,
+        `#${CUSTOM_CSS_CODEMIRROR_EDITOR_ID}`,
+        CUSTOM_CSS_HOST_SELECTOR,
+        CUSTOM_CSS_MAXIMIZED_SOURCE_SELECTOR,
+    ].join(', ')));
 }
 
 function areCustomCssCodeMirrorMutationsInternal(state, mutations) {
@@ -4205,8 +4344,16 @@ function areCustomCssCodeMirrorMutationsInternal(state, mutations) {
     });
 }
 
-function scheduleCustomCssCodeMirrorEditorRefresh(state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY]) {
-    if (!state?.enabled || state.refreshFrame) {
+function scheduleCustomCssCodeMirrorEditorRefresh(state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY], { colorSchemeDirty = false } = {}) {
+    if (!state?.enabled) {
+        return;
+    }
+
+    if (colorSchemeDirty) {
+        state.colorSchemeDirty = true;
+    }
+
+    if (state.refreshFrame) {
         return;
     }
 
@@ -4226,19 +4373,24 @@ function refreshCustomCssCodeMirrorEditorTarget(state) {
     if (!(source instanceof HTMLTextAreaElement) || !source.isConnected) {
         flushCustomCssCodeMirrorEditor('target removed', { apply: true, save: true });
         detachCustomCssCodeMirrorEditor(state);
+        bindCustomCssCodeMirrorEditorMutationObserver(state);
         return;
     }
 
     if (state.source === source && state.wrapper?.isConnected) {
         updateCustomCssCodeMirrorSourceClasses(state, source, state.wrapper);
-        updateCustomCssCodeMirrorColorScheme(state, source, state.wrapper);
+        if (state.colorSchemeDirty) {
+            updateCustomCssCodeMirrorColorScheme(state, source, state.wrapper);
+        }
         syncCustomCssCodeMirrorFromSourceIfClean(state);
+        bindCustomCssCodeMirrorEditorMutationObserver(state);
         return;
     }
 
     flushCustomCssCodeMirrorEditor('target switch', { apply: true, save: true });
     detachCustomCssCodeMirrorEditor(state);
     attachCustomCssCodeMirrorEditor(state, source);
+    bindCustomCssCodeMirrorEditorMutationObserver(state);
 }
 
 function getCustomCssCodeMirrorSource() {
@@ -4311,6 +4463,7 @@ function updateCustomCssCodeMirrorColorScheme(state, source, wrapper) {
     const colorScheme = detectCustomCssCodeMirrorColorScheme(source);
 
     state.colorScheme = colorScheme;
+    state.colorSchemeDirty = false;
     wrapper.classList.toggle(CUSTOM_CSS_DARK_THEME_CLASS, colorScheme === 'dark');
     wrapper.classList.toggle(CUSTOM_CSS_LIGHT_THEME_CLASS, colorScheme !== 'dark');
     wrapper.dataset.colorScheme = colorScheme;
