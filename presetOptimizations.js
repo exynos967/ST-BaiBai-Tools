@@ -2876,12 +2876,15 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-body {
+    display: grid;
+    grid-template-rows: 1fr;
     min-height: 0;
     overflow: hidden;
+    transition: grid-template-rows ${PRESET_VUE_BODY_HEIGHT_ANIMATION_MS}ms ${PRESET_VUE_BODY_HEIGHT_EASING};
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-collapsed .bai-bai-preset-favorites-body {
-    height: 0;
+    grid-template-rows: 0fr;
     pointer-events: none;
 }
 
@@ -3189,13 +3192,16 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-body {
+    display: grid;
+    grid-template-rows: 1fr;
     min-height: 0;
     overflow: hidden;
+    transition: grid-template-rows ${PRESET_VUE_BODY_HEIGHT_ANIMATION_MS}ms ${PRESET_VUE_BODY_HEIGHT_EASING};
 }
 
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-global-library-collapsed .bai-bai-preset-group-body,
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group-collapsed .bai-bai-preset-group-body {
-    height: 0;
+    grid-template-rows: 0fr;
     pointer-events: none;
 }
 
@@ -3311,12 +3317,15 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 }
 
 #completion_prompt_manager .bai-bai-preset-global-library-outside .bai-bai-preset-group-body {
+    display: grid;
+    grid-template-rows: 1fr;
     min-height: 0;
     overflow: hidden;
+    transition: grid-template-rows ${PRESET_VUE_BODY_HEIGHT_ANIMATION_MS}ms ${PRESET_VUE_BODY_HEIGHT_EASING};
 }
 
 #completion_prompt_manager .bai-bai-preset-global-library-outside.bai-bai-preset-global-library-collapsed .bai-bai-preset-group-body {
-    height: 0;
+    grid-template-rows: 0fr;
     pointer-events: none;
 }
 
@@ -5012,238 +5021,21 @@ function setPresetVuePromptGroupBodyMounted(model, groupId, mounted) {
     delete model.mountedGroupBodies[groupId];
 }
 
-function runPresetVuePromptBodyHeightTransition(mountId, expanding, mutator, { duration = PRESET_VUE_BODY_HEIGHT_ANIMATION_MS, easing = PRESET_VUE_BODY_HEIGHT_EASING } = {}) {
+// 展开/收起的高度动画改为纯 CSS 驱动(grid-template-rows: 0fr↔1fr,见样式表)。
+// 这里只负责执行状态变更(mount/collapsed 切换),动画交给浏览器,
+// 避免 JS 用 WAAPI 对 body 跑 height 动画时触发的合成层漏绘 bug(展开后空白)。
+function runPresetVuePromptBodyHeightTransition(mountId, expanding, mutator) {
     if (typeof mutator !== 'function') {
         return undefined;
     }
 
-    const manager = getPresetVuePromptListManagerState();
-
-    if (!shouldRunPresetVuePromptBodyHeightTransition(manager)) {
-        return mutator();
-    }
-
-    const beforeHeights = capturePresetVuePromptBodyHeights(mountId, manager);
-    cancelPresetVuePromptBodyHeightAnimations(manager, { invalidate: false });
-    manager.bodyHeightTransitionCycle = (manager.bodyHeightTransitionCycle ?? 0) + 1;
-    const cycle = manager.bodyHeightTransitionCycle;
-    const result = mutator();
-    const animateAfterRender = () => {
-        if (manager.bodyHeightTransitionCycle !== cycle || !shouldRunPresetVuePromptBodyHeightTransition(manager)) {
-            return;
-        }
-
-        animatePresetVuePromptBodyHeights(mountId, {
-            beforeHeights,
-            duration,
-            easing,
-            expanding,
-            manager,
-        });
-    };
-
-    const nextTick = manager.vue?.nextTick;
-    if (typeof nextTick === 'function') {
-        nextTick(animateAfterRender);
-    } else if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(animateAfterRender);
-    } else {
-        setTimeout(animateAfterRender, 0);
-    }
-
-    return result;
+    return mutator();
 }
 
-function shouldRunPresetVuePromptBodyHeightTransition(manager = getPresetVuePromptListManagerState()) {
-    return Boolean(
-        manager?.state
-        && manager.root instanceof HTMLElement
-        && manager.root.isConnected
-        && !manager.state.dragging
-        && typeof Element !== 'undefined'
-        && typeof Element.prototype.animate === 'function'
-        && isPresetVisibilityElementVisible(manager.root),
-    );
+// 保留为安全空操作:外部(卸载、开始拖拽)仍会调用它,纯 CSS 方案下无需取消任何 JS 动画。
+function cancelPresetVuePromptBodyHeightAnimations() {
 }
 
-function capturePresetVuePromptBodyHeights(mountId, manager = getPresetVuePromptListManagerState()) {
-    const heights = new Map();
-
-    for (const body of getPresetVuePromptBodyHeightElements(mountId, manager)) {
-        const key = getPresetVuePromptBodyHeightElementKey(body);
-
-        if (!key) {
-            continue;
-        }
-
-        heights.set(key, body.getBoundingClientRect().height);
-    }
-
-    return heights;
-}
-
-function getPresetVuePromptBodyHeightElements(mountId, manager = getPresetVuePromptListManagerState()) {
-    const host = manager.host instanceof HTMLElement ? manager.host : document;
-
-    if (mountId === PRESET_VUE_FAVORITES_ENTRY_ID) {
-        return Array.from(host.querySelectorAll(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-favorites-body`))
-            .filter(element => element instanceof HTMLElement);
-    }
-
-    if (mountId === PRESET_VUE_GLOBAL_LIBRARY_ENTRY_ID) {
-        return Array.from(host.querySelectorAll('.bai-bai-preset-global-library .bai-bai-preset-group-body'))
-            .filter(element => element instanceof HTMLElement);
-    }
-
-    return Array.from(host.querySelectorAll(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR} .bai-bai-preset-group[data-preset-group-id]`))
-        .filter(element => element instanceof HTMLElement && element.dataset.presetGroupId === mountId)
-        .map(element => element.querySelector('.bai-bai-preset-group-body'))
-        .filter(element => element instanceof HTMLElement);
-}
-
-function getPresetVuePromptBodyHeightElementKey(body) {
-    if (!(body instanceof HTMLElement)) {
-        return null;
-    }
-
-    if (body.classList.contains('bai-bai-preset-favorites-body')) {
-        return 'favorites';
-    }
-
-    const globalLibrary = body.closest('.bai-bai-preset-global-library');
-
-    if (globalLibrary instanceof HTMLElement) {
-        return globalLibrary.classList.contains('bai-bai-preset-global-library-outside')
-            ? 'outside-global-library'
-            : 'global-library';
-    }
-
-    const group = body.closest('.bai-bai-preset-group[data-preset-group-id]');
-
-    if (group instanceof HTMLElement) {
-        return `group:${group.dataset.presetGroupId || ''}`;
-    }
-
-    return null;
-}
-
-function animatePresetVuePromptBodyHeights(mountId, { beforeHeights, duration, easing, expanding, manager }) {
-    if (!(beforeHeights instanceof Map) || duration <= 0) {
-        return;
-    }
-
-    const elements = getPresetVuePromptBodyHeightElements(mountId, manager);
-
-    for (const body of elements) {
-        const key = getPresetVuePromptBodyHeightElementKey(body);
-        const beforeHeight = Number(beforeHeights.get(key));
-        const measuredHeight = measurePresetVuePromptBodyExpandedHeight(body);
-        const startHeight = Number.isFinite(beforeHeight) && beforeHeight > 0
-            ? beforeHeight
-            : (expanding ? 0 : measuredHeight);
-        const endHeight = expanding ? measuredHeight : 0;
-
-        animatePresetVuePromptBodyHeightElement(body, startHeight, endHeight, { duration, easing, manager });
-    }
-}
-
-function measurePresetVuePromptBodyExpandedHeight(body) {
-    if (!(body instanceof HTMLElement)) {
-        return 0;
-    }
-
-    const previousHeight = body.style.height;
-    body.style.height = 'auto';
-    const height = Math.max(body.scrollHeight, body.getBoundingClientRect().height);
-    body.style.height = previousHeight;
-    return height;
-}
-
-function animatePresetVuePromptBodyHeightElement(body, startHeight, endHeight, { duration, easing, manager }) {
-    if (!(body instanceof HTMLElement) || !body.isConnected) {
-        return;
-    }
-
-    const start = Math.max(0, Number(startHeight) || 0);
-    const end = Math.max(0, Number(endHeight) || 0);
-
-    if (Math.abs(start - end) < 0.5) {
-        return;
-    }
-
-    const previousWillChange = body.style.willChange;
-    body.style.willChange = previousWillChange
-        ? `${previousWillChange}, height`
-        : 'height';
-
-    const animation = body.animate(
-        [
-            { height: `${start}px` },
-            { height: `${end}px` },
-        ],
-        {
-            duration,
-            easing,
-            fill: 'none',
-        },
-    );
-    const record = {
-        animation,
-        element: body,
-        previousWillChange,
-        cleaned: false,
-    };
-    manager.bodyHeightAnimations.push(record);
-
-    const cleanup = () => cleanupPresetVuePromptBodyHeightAnimationRecord(manager, record);
-    animation.addEventListener?.('finish', cleanup, { once: true });
-    animation.addEventListener?.('cancel', cleanup, { once: true });
-    animation.finished?.then(cleanup, cleanup);
-}
-
-function cancelPresetVuePromptBodyHeightAnimations(manager = getPresetVuePromptListManagerState(), { invalidate = true } = {}) {
-    if (invalidate) {
-        manager.bodyHeightTransitionCycle = (manager.bodyHeightTransitionCycle ?? 0) + 1;
-    }
-
-    if (!Array.isArray(manager.bodyHeightAnimations) || !manager.bodyHeightAnimations.length) {
-        manager.bodyHeightAnimations = [];
-        return;
-    }
-
-    const records = [...manager.bodyHeightAnimations];
-    manager.bodyHeightAnimations = [];
-
-    for (const record of records) {
-        try {
-            record.animation?.cancel?.();
-        } catch {
-            // Best-effort cleanup below handles stale or already-finished animations.
-        }
-
-        cleanupPresetVuePromptBodyHeightAnimationRecord(manager, record);
-    }
-}
-
-function cleanupPresetVuePromptBodyHeightAnimationRecord(manager, record) {
-    if (!record || record.cleaned) {
-        return;
-    }
-
-    record.cleaned = true;
-
-    if (record.element instanceof HTMLElement) {
-        record.element.style.willChange = record.previousWillChange || '';
-    }
-
-    if (Array.isArray(manager.bodyHeightAnimations)) {
-        const index = manager.bodyHeightAnimations.indexOf(record);
-
-        if (index >= 0) {
-            manager.bodyHeightAnimations.splice(index, 1);
-        }
-    }
-}
 
 function isPresetVuePromptGroupBodyMounted(model, item) {
     const mountId = getPresetVuePromptBodyMountId(item);
