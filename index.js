@@ -4148,13 +4148,28 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
 
         flushCustomCssCodeMirrorEditor('page lifecycle', { apply: true, save: true });
     };
+    // Native theme switches update #customCSS.value programmatically, which does
+    // not fire an `input` event, so the editor cannot learn the new CSS from the
+    // input pipeline. Re-sync from power_user.custom_css after the theme applies.
+    // Bubble phase: on the native path the core `#themes` change handler runs
+    // first (applyTheme → applyCustomCSS), then this fires; on the lazy path the
+    // guard stops propagation in capture, but that path already syncs explicitly.
+    const themeChangeHandler = (event) => {
+        const target = event.target;
+
+        if (target instanceof HTMLSelectElement && target.id === 'themes') {
+            scheduleCustomCssCodeMirrorThemeSync();
+        }
+    };
 
     document.addEventListener('click', clickHandler, true);
+    document.addEventListener('change', themeChangeHandler, false);
     window.addEventListener('pagehide', pageLifecycleHandler);
     document.addEventListener('visibilitychange', pageLifecycleHandler);
 
     state.globalListeners.push(
         { target: document, type: 'click', handler: clickHandler, options: true },
+        { target: document, type: 'change', handler: themeChangeHandler, options: false },
         { target: window, type: 'pagehide', handler: pageLifecycleHandler, options: undefined },
         { target: document, type: 'visibilitychange', handler: pageLifecycleHandler, options: undefined },
     );
