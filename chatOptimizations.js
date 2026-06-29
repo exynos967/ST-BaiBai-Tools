@@ -5191,6 +5191,19 @@ function handleMessageTripleClickEdit(e) {
         return;
     }
 
+    // Ignore clicks on edit controls (textarea, native/bottom confirm/cancel buttons).
+    // These can live inside `.mes_text`, so a fast click on them would otherwise be
+    // misread as another multi-click and re-trigger the native `.mes_edit` handler,
+    // which saves the message (stripping blank lines) and reopens the editor.
+    if (e.target.closest(MESSAGE_EDIT_BOTTOM_ACTIONS_RELEVANT_SELECTOR)) {
+        return;
+    }
+
+    // Already editing: re-triggering the edit button would force a save + reopen.
+    if (document.querySelector('#chat #curEditTextarea')) {
+        return;
+    }
+
     const mesText = e.target.closest('.mes_text');
     if (!(mesText instanceof HTMLElement)) {
         return;
