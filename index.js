@@ -247,8 +247,6 @@ const CHARACTER_LIST_LAZY_AVATAR_PENDING_CLASS = 'bai-bai-toolkit-lazy-avatar-pe
 const CHARACTER_LIST_LAZY_AVATAR_LOADED_CLASS = 'bai-bai-toolkit-lazy-avatar-loaded';
 const CHARACTER_LIST_LAZY_AVATAR_SHELL_CLASS = 'bai-bai-toolkit-lazy-avatar-shell';
 const CHARACTER_LIST_LAZY_AVATAR_ROOT_MARGIN = '800px 0px 1200px 0px';
-const SILENT_UPDATE_STORAGE_KEY = 'bai_bai_toolkit_silent_update';
-const SILENT_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 const SAVE_REQUEST_GZIP_PATHS = new Set([
     '/api/chats/save',
     '/api/chats/group/save',
@@ -2717,19 +2715,13 @@ function formatTraceBytes(value) {
 }
 
 function initializeExtensionUpdateCheck() {
-    if (readSilentUpdateState()?.updateAvailable === true) {
-        applyUpdateAvailableVisualState(true);
-        queueExtensionUpdatePrompt();
-        return;
-    }
-
     void checkForSilentExtensionUpdate()
         .catch((error) => console.debug(`${LOG_PREFIX} Silent update failed`, error));
 }
 
-async function checkForSilentExtensionUpdate({ force = false } = {}) {
-    if (!force && !shouldCheckForSilentExtensionUpdate()) {
-        return null;
+async function checkForSilentExtensionUpdate() {
+    if (extensionState.silentUpdateResult) {
+        return extensionState.silentUpdateResult;
     }
 
     if (extensionState.silentUpdatePromise) {
@@ -2737,6 +2729,14 @@ async function checkForSilentExtensionUpdate({ force = false } = {}) {
     }
 
     extensionState.silentUpdatePromise = runSilentExtensionUpdate()
+        .then((result) => {
+            extensionState.silentUpdateResult = result;
+            return result;
+        })
+        .catch((error) => {
+            extensionState.silentUpdateResult = { error };
+            throw error;
+        })
         .finally(() => {
             extensionState.silentUpdatePromise = null;
         });
@@ -2749,7 +2749,7 @@ async function runSilentExtensionUpdate() {
         const localVersion = CURRENT_VERSION;
 
         const remoteManifestUrl = `https://raw.githubusercontent.com/baibai-git/SillyTavern-Mobile-Resize-Guard/main/manifest.json?t=${Date.now()}`;
-        const remoteManifestResponse = await fetch(remoteManifestUrl);
+        const remoteManifestResponse = await fetch(remoteManifestUrl, { cache: 'no-store' });
         if (!remoteManifestResponse.ok) {
             throw new Error(`Failed to fetch remote manifest: ${remoteManifestResponse.statusText}`);
         }
@@ -2758,7 +2758,6 @@ async function runSilentExtensionUpdate() {
 
         const updateAvailable = isVersionGreater(remoteVersion, localVersion);
 
-        setCachedUpdateAvailable(updateAvailable);
         applyUpdateAvailableVisualState(updateAvailable);
 
         if (updateAvailable) {
@@ -2812,14 +2811,6 @@ async function fetchCurrentExtensionEndpoint(endpoint) {
             extensionName: EXTENSION_ID,
             global: type === 'global',
         }),
-    });
-}
-
-function setCachedUpdateAvailable(updateAvailable) {
-    writeSilentUpdateState({
-        ...readSilentUpdateState(),
-        checkedAt: Date.now(),
-        updateAvailable: Boolean(updateAvailable),
     });
 }
 
@@ -2908,7 +2899,6 @@ async function performCurrentExtensionUpdate() {
         throw new Error(await getResponseErrorMessage(response));
     }
 
-    setCachedUpdateAvailable(false);
     applyUpdateAvailableVisualState(false);
     toastr.success(t`Extension updated successfully. Reloading...`);
     setTimeout(() => location.reload(), 1000);
@@ -2946,33 +2936,6 @@ async function getResponseErrorMessage(response) {
     const text = await response.text();
 
     return text || response.statusText || `HTTP ${response.status}`;
-}
-
-function shouldCheckForSilentExtensionUpdate() {
-    const state = readSilentUpdateState();
-    const checkedAt = Number(state?.checkedAt ?? 0);
-
-    if (typeof state?.updateAvailable !== 'boolean') {
-        return true;
-    }
-
-    return !Number.isFinite(checkedAt) || Date.now() - checkedAt >= SILENT_UPDATE_INTERVAL_MS;
-}
-
-function readSilentUpdateState() {
-    try {
-        return JSON.parse(localStorage.getItem(SILENT_UPDATE_STORAGE_KEY) || '{}');
-    } catch {
-        return {};
-    }
-}
-
-function writeSilentUpdateState(state) {
-    try {
-        localStorage.setItem(SILENT_UPDATE_STORAGE_KEY, JSON.stringify(state));
-    } catch {
-        // Ignore storage errors; updates should never block extension startup.
-    }
 }
 
 async function renderSettingsPanel() {
@@ -3029,7 +2992,7 @@ async function renderSettingsPanel() {
             settings.updatePromptOnAvailableEnabled = Boolean($(this).prop('checked'));
             saveExtensionSettings();
 
-            if (settings.updatePromptOnAvailableEnabled && readSilentUpdateState()?.updateAvailable === true) {
+            if (settings.updatePromptOnAvailableEnabled && extensionState.silentUpdateResult?.isUpToDate === false) {
                 queueExtensionUpdatePrompt();
             }
         });
@@ -3776,34 +3739,40 @@ async function initializeUpdateUI(container) {
     const updateStatus = container.find('.bai_bai_toolkit_update_status');
     const badge = container.find('.bai_bai_toolkit_update_badge');
 
-    // 获取并显示当前版本号
     versionSpan.text(CURRENT_VERSION);
-
-    // 检查更新
     updateStatus.text('检查更新中...');
 
-    // 如果已经有缓存的更新状态，直接使用
-    const state = readSilentUpdateState();
-    if (state && state.updateAvailable) {
-        showUpdateAvailable();
-    } else if (!shouldCheckForSilentExtensionUpdate()) {
-        showNoUpdateAvailable();
+    if (extensionState.silentUpdateResult) {
+        showUpdateState(extensionState.silentUpdateResult);
     } else {
-        // 后台检查更新
         checkUpdateAndShowUI();
     }
 
     async function checkUpdateAndShowUI() {
         try {
-            const data = await checkForSilentExtensionUpdate({ force: true });
-            if (data?.isUpToDate === false) {
-                showUpdateAvailable();
-            } else {
-                showNoUpdateAvailable();
-            }
+            showUpdateState(await checkForSilentExtensionUpdate());
         } catch (e) {
             updateStatus.text('检查更新出错');
         }
+    }
+
+    function showUpdateState(data) {
+        if (data?.error) {
+            showUpdateError();
+            return;
+        }
+
+        if (data?.isUpToDate === false) {
+            showUpdateAvailable();
+        } else {
+            showNoUpdateAvailable();
+        }
+    }
+
+    function showUpdateError() {
+        updateButton.hide();
+        badge.hide();
+        updateStatus.text('检查更新出错');
     }
 
     function showUpdateAvailable() {
