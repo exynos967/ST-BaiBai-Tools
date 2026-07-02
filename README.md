@@ -2,7 +2,7 @@
 
 柏宝箱是一个 SillyTavern 第三方扩展，主要用来缓解移动端、长聊天、海量角色/正则/预设场景下的卡顿。它会在不改变 SillyTavern 原有使用方式的前提下，接管部分高开销的列表渲染、接口请求、编辑器和滚动行为。
 
-当前版本：`0.27.19`
+当前版本：`0.27.21`
 
 ## 功能总览
 
@@ -142,6 +142,8 @@
 `自定义CSS CodeMirror 编辑器` 会用 CodeMirror 接管用户设置里的自定义 CSS 编辑区，并在离开编辑器或页面生命周期事件中再同步和应用样式，减少输入期间的样式重算。
 
 `切换美化优化` 会拦截原生 `#customCSS` 的长文本写入，把值重定向到 JavaScript 内存属性，从物理层面避免浏览器因为向原生 textarea 写入大段 CSS 而触发布局和绘制卡顿。开启此项会自动开启自定义 CSS CodeMirror 编辑器。
+
+移动端切换美化后切到后台再返回时，扩展会以 SillyTavern 当前主题的 `power_user.custom_css` 为准，重新校准 `#custom-style`、原生 textarea、CodeMirror 文档和 Shadow Property，避免新旧美化 CSS 混合残留。
 
 ### 角色描述 CodeMirror 编辑器
 

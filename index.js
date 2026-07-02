@@ -23,7 +23,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.27.19';
+const CURRENT_VERSION = '0.27.21';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -203,6 +203,9 @@ const CUSTOM_CSS_CODEMIRROR_EXTERNAL_READ_SELECTOR = [
     '#native-search-dropdown-new .vce-search-item-new',
 ].join(', ');
 const CUSTOM_CSS_DARK_BACKGROUND_LUMINANCE_THRESHOLD = 0.45;
+const CUSTOM_CSS_THEME_SYNC_SETTLE_DELAYS_MS = [0, 50, 160, 500, 1000];
+const CUSTOM_CSS_RESTORE_SYNC_SETTLE_DELAYS_MS = [0, 80, 200, 500];
+const CUSTOM_CSS_DEBUG_FUNCTION_NAME = 'baiBaiToolkitDebugCustomCss';
 const DESCRIPTION_CODEMIRROR_CDN_MODULES = {
     state: 'https://esm.sh/@codemirror/state@6?bundle',
     view: 'https://esm.sh/@codemirror/view@6?bundle',
@@ -930,40 +933,100 @@ function setBaibaokuThemeSelectBusy(target, busy) {
 }
 
 function syncCustomCssCodeMirrorFromThemeChange() {
-    const state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
-    if (!state?.enabled || !state.view) {
-        return false;
-    }
-
-    const value = String(power_user.custom_css ?? '');
-    const originalInput = getCustomCssOriginalInput();
-    if (originalInput) {
-        originalInput.value = value;
-    }
-    if (state.source instanceof HTMLTextAreaElement) {
-        state.source.value = value;
-    }
-
-    state.dirty = false;
-    return syncCustomCssCodeMirrorFromSource(state, { force: true }) === true;
+    return syncCustomCssStateFromSettings('theme change', {
+        forceEditor: true,
+        refreshTarget: true,
+        clearThemePending: true,
+    });
 }
 
 function scheduleCustomCssCodeMirrorThemeSync() {
-    const sync = () => {
+    const state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
+    const token = (state?.themeSyncToken ?? 0) + 1;
+
+    // Mark synchronously, before the rAF is even registered. A theme switch has
+    // already written the new CSS into power_user.custom_css, so the editor's
+    // current doc is stale. If a page-lifecycle flush fires before the deferred
+    // sync runs (e.g. the tab is hidden right after switching, which also freezes
+    // rAF), this flag tells the flush to NOT write the stale doc back over the
+    // fresh custom_css. The flag is cleared once the sync has pulled the new CSS
+    // into the doc.
+    if (state?.enabled) {
+        state.themeSyncPending = true;
+        state.themeSyncToken = token;
+        state.themeSyncTimers ||= [];
+        state.themeSyncFrames ||= [];
+        clearCustomCssCodeMirrorThemeSyncTimers(state);
+    }
+
+    const sync = (phase = 'settle') => {
+        if (state?.enabled && state.themeSyncToken !== token) {
+            return;
+        }
+
         try {
             if (syncCustomCssCodeMirrorFromThemeChange()) {
-                console.debug(`${LOG_PREFIX} CodeMirror custom CSS editor synced after theme change`);
+                console.debug(`${LOG_PREFIX} CodeMirror custom CSS editor synced after theme change (${phase})`);
             }
         } catch (error) {
             console.debug(`${LOG_PREFIX} Failed to sync CodeMirror custom CSS editor after theme change`, error);
         }
     };
 
+    queueCustomCssThemeSyncPass(state, token, () => sync('microtask'));
+
     if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(sync);
-    } else {
-        setTimeout(sync, 0);
+        const frame = requestAnimationFrame(() => sync('animation frame'));
+        if (state?.enabled) {
+            state.themeSyncFrames.push(frame);
+        }
     }
+
+    for (const delay of CUSTOM_CSS_THEME_SYNC_SETTLE_DELAYS_MS) {
+        const timer = setTimeout(() => sync(`timeout ${delay}ms`), delay);
+        if (state?.enabled) {
+            state.themeSyncTimers.push(timer);
+        }
+    }
+}
+
+function queueCustomCssThemeSyncPass(state, token, callback) {
+    const run = () => {
+        if (state?.enabled && state.themeSyncToken !== token) {
+            return;
+        }
+
+        callback();
+    };
+
+    if (typeof queueMicrotask === 'function') {
+        queueMicrotask(run);
+    } else {
+        const timer = setTimeout(run, 0);
+        if (state?.enabled) {
+            state.themeSyncTimers ||= [];
+            state.themeSyncTimers.push(timer);
+        }
+    }
+}
+
+function clearCustomCssCodeMirrorThemeSyncTimers(state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY]) {
+    if (!state) {
+        return;
+    }
+
+    for (const timer of state.themeSyncTimers || []) {
+        clearTimeout(timer);
+    }
+
+    if (typeof cancelAnimationFrame === 'function') {
+        for (const frame of state.themeSyncFrames || []) {
+            cancelAnimationFrame(frame);
+        }
+    }
+
+    state.themeSyncTimers = [];
+    state.themeSyncFrames = [];
 }
 
 function getThemeManagerBackgroundBindings() {
@@ -3778,6 +3841,7 @@ function applyFeatureSettings() {
     applyCharacterListAvatarLazyLoadOptimization();
     applyFastChatGetOptimization();
     applyDescriptionCodeMirrorEditorOptimization();
+    installCustomCssDebugFunction();
     applyCustomCssInputOptimization();
     presetOptimizations.applyPresetScrollOptimization();
     presetOptimizations.applyPresetDragOptimization();
@@ -3819,24 +3883,38 @@ function applyCustomCssInputOptimization() {
 }
 
 function installCustomCssShadowPropertyOptimization() {
-    if (extensionState.customCssShadowPropertyInstalled) {
-        return;
-    }
-
     const input = document.getElementById(CUSTOM_CSS_INPUT_ID);
     if (!(input instanceof HTMLTextAreaElement)) {
         return;
     }
 
-    const originalDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-    if (!originalDescriptor || typeof originalDescriptor.get !== 'function' || typeof originalDescriptor.set !== 'function') {
-        return;
+    installCustomCssShadowPropertyOnInput(input, String(power_user.custom_css ?? input.value ?? ''));
+}
+
+function installCustomCssShadowPropertyOnInput(input, initialValue = '') {
+    if (!(input instanceof HTMLTextAreaElement)) {
+        return false;
     }
 
-    let virtualValue = input.value || '';
+    const originalDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    if (!originalDescriptor || typeof originalDescriptor.get !== 'function' || typeof originalDescriptor.set !== 'function') {
+        return false;
+    }
+
+    if (extensionState.customCssShadowPropertyInstalled && extensionState.customCssShadowPropertyInput === input) {
+        input.value = initialValue;
+        return true;
+    }
+
+    if (extensionState.customCssShadowPropertyInstalled) {
+        restoreCustomCssShadowPropertyInput(extensionState.customCssShadowPropertyInput);
+    }
+
+    let virtualValue = String(initialValue ?? '');
 
     // Store original so we can restore later
     extensionState.customCssOriginalValueDescriptor = originalDescriptor;
+    extensionState.customCssShadowVirtualValue = virtualValue;
 
     Object.defineProperty(input, 'value', {
         get: function () {
@@ -3844,6 +3922,7 @@ function installCustomCssShadowPropertyOptimization() {
         },
         set: function (newValue) {
             virtualValue = String(newValue);
+            extensionState.customCssShadowVirtualValue = virtualValue;
             // Intentionally DO NOT call original setter to prevent DOM rendering
         },
         configurable: true,
@@ -3851,7 +3930,24 @@ function installCustomCssShadowPropertyOptimization() {
     });
 
     extensionState.customCssShadowPropertyInstalled = true;
+    extensionState.customCssShadowPropertyInput = input;
     console.debug(`${LOG_PREFIX} Custom CSS shadow property optimization installed`);
+
+    return true;
+}
+
+function syncCustomCssShadowPropertyTarget(value = String(power_user.custom_css ?? '')) {
+    if (!settings.customCssShadowPropertyEnabled) {
+        return false;
+    }
+
+    const input = getCustomCssOriginalInput();
+
+    if (!(input instanceof HTMLTextAreaElement)) {
+        return false;
+    }
+
+    return installCustomCssShadowPropertyOnInput(input, value);
 }
 
 function removeCustomCssShadowPropertyOptimization() {
@@ -3859,19 +3955,27 @@ function removeCustomCssShadowPropertyOptimization() {
         return;
     }
 
-    const input = document.getElementById(CUSTOM_CSS_INPUT_ID);
-    const originalDescriptor = extensionState.customCssOriginalValueDescriptor;
-
-    if (input instanceof HTMLTextAreaElement && originalDescriptor) {
-        // Restore actual value to DOM before removing interception
-        const currentValue = input.value;
-        Object.defineProperty(input, 'value', originalDescriptor);
-        input.value = currentValue;
-    }
+    restoreCustomCssShadowPropertyInput(extensionState.customCssShadowPropertyInput || document.getElementById(CUSTOM_CSS_INPUT_ID));
 
     extensionState.customCssOriginalValueDescriptor = null;
     extensionState.customCssShadowPropertyInstalled = false;
+    extensionState.customCssShadowPropertyInput = null;
+    extensionState.customCssShadowVirtualValue = '';
     console.debug(`${LOG_PREFIX} Custom CSS shadow property optimization removed`);
+}
+
+function restoreCustomCssShadowPropertyInput(input) {
+    const originalDescriptor = extensionState.customCssOriginalValueDescriptor;
+
+    if (!(input instanceof HTMLTextAreaElement) || !originalDescriptor) {
+        return false;
+    }
+
+    const currentValue = String(input.value ?? '');
+    Object.defineProperty(input, 'value', originalDescriptor);
+    input.value = currentValue;
+
+    return true;
 }
 
 function installCustomCssInputOptimization() {
@@ -3936,7 +4040,8 @@ function installCustomCssInputOptimization() {
         }
     };
     const pageLifecycleHandler = (event) => {
-        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+        if (isCustomCssPageRestoreEvent(event)) {
+            scheduleCustomCssStateRestoreSync(`input optimization ${event?.type || 'restore'}`);
             return;
         }
 
@@ -3949,6 +4054,8 @@ function installCustomCssInputOptimization() {
     document.addEventListener('change', flushHandler, true);
     document.addEventListener('blur', flushHandler, true);
     window.addEventListener('pagehide', pageLifecycleHandler);
+    window.addEventListener('pageshow', pageLifecycleHandler);
+    window.addEventListener('focus', pageLifecycleHandler);
     document.addEventListener('visibilitychange', pageLifecycleHandler);
 
     extensionState[CUSTOM_CSS_INPUT_OPTIMIZATION_KEY] = {
@@ -3977,7 +4084,10 @@ function removeCustomCssInputOptimization() {
     document.removeEventListener('change', state.flushHandler, true);
     document.removeEventListener('blur', state.flushHandler, true);
     window.removeEventListener('pagehide', state.pageLifecycleHandler);
+    window.removeEventListener('pageshow', state.pageLifecycleHandler);
+    window.removeEventListener('focus', state.pageLifecycleHandler);
     document.removeEventListener('visibilitychange', state.pageLifecycleHandler);
+    clearCustomCssRestoreSyncTimers();
     delete extensionState[CUSTOM_CSS_INPUT_OPTIMIZATION_KEY];
 }
 
@@ -4012,6 +4122,17 @@ function flushCustomCssApply() {
 }
 
 function flushCurrentCustomCssInput() {
+    const codeMirrorState = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
+
+    if (codeMirrorState?.themeSyncPending) {
+        syncCustomCssStateFromSettings('current input flush while theme sync is pending', {
+            forceEditor: true,
+            refreshTarget: true,
+            clearThemePending: false,
+        });
+        return;
+    }
+
     if (flushCustomCssCodeMirrorEditor('current input flush', { apply: true, save: true })) {
         return;
     }
@@ -4028,6 +4149,212 @@ function flushCurrentCustomCssInput() {
     flushCustomCssApply();
 }
 
+function syncCustomCssStateFromSettings(reason = 'custom css settings sync', {
+    forceEditor = false,
+    refreshTarget = false,
+    clearThemePending = false,
+} = {}) {
+    const value = String(power_user.custom_css ?? '');
+
+    syncCustomCssShadowPropertyTarget(value);
+
+    const originalInput = getCustomCssOriginalInput();
+    let originalInputSynced = true;
+
+    if (originalInput instanceof HTMLTextAreaElement) {
+        if (originalInput.value !== value) {
+            originalInput.value = value;
+        }
+
+        originalInputSynced = originalInput.value === value;
+    }
+
+    let state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
+
+    if (refreshTarget && state?.enabled) {
+        refreshCustomCssCodeMirrorEditorTarget(state);
+        state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
+    }
+
+    let sourceSynced = true;
+    let editorSynced = true;
+
+    if (state?.enabled) {
+        if (state.source instanceof HTMLTextAreaElement) {
+            if (state.source.value !== value) {
+                state.source.value = value;
+            }
+
+            sourceSynced = state.source.value === value;
+        }
+
+        if (state.view) {
+            const shouldSyncEditor = forceEditor || state.themeSyncPending || !state.dirty;
+
+            if (shouldSyncEditor) {
+                state.dirty = false;
+                syncCustomCssCodeMirrorFromSource(state, { force: true });
+            }
+
+            editorSynced = getCustomCssCodeMirrorValue(state) === value;
+        }
+    }
+
+    applyCustomCssStyleText();
+
+    const style = document.getElementById(CUSTOM_CSS_STYLE_ID);
+    const styleSynced = style?.textContent === value;
+    const complete = originalInputSynced && sourceSynced && editorSynced && styleSynced;
+
+    if (complete && clearThemePending && state) {
+        state.themeSyncPending = false;
+    }
+
+    if (!complete) {
+        console.debug(`${LOG_PREFIX} Custom CSS state sync incomplete after ${reason}`, {
+            originalInputSynced,
+            sourceSynced,
+            editorSynced,
+            styleSynced,
+            forceEditor,
+            refreshTarget,
+        });
+    }
+
+    return complete;
+}
+
+function scheduleCustomCssStateRestoreSync(reason = 'page restore') {
+    clearCustomCssRestoreSyncTimers();
+
+    const token = (extensionState.customCssRestoreSyncToken ?? 0) + 1;
+    extensionState.customCssRestoreSyncToken = token;
+    extensionState.customCssRestoreSyncTimers = [];
+
+    const sync = (phase) => {
+        if (extensionState.customCssRestoreSyncToken !== token) {
+            return;
+        }
+
+        const state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
+        syncCustomCssStateFromSettings(`${reason} (${phase})`, {
+            forceEditor: Boolean(state?.themeSyncPending),
+            refreshTarget: true,
+            clearThemePending: true,
+        });
+    };
+
+    sync('immediate');
+
+    for (const delay of CUSTOM_CSS_RESTORE_SYNC_SETTLE_DELAYS_MS) {
+        const timer = setTimeout(() => sync(`timeout ${delay}ms`), delay);
+        extensionState.customCssRestoreSyncTimers.push(timer);
+    }
+}
+
+function clearCustomCssRestoreSyncTimers() {
+    for (const timer of extensionState.customCssRestoreSyncTimers || []) {
+        clearTimeout(timer);
+    }
+
+    extensionState.customCssRestoreSyncTimers = [];
+}
+
+function isCustomCssPageRestoreEvent(event) {
+    if (event?.type === 'pageshow' || event?.type === 'focus') {
+        return true;
+    }
+
+    return event?.type === 'visibilitychange' && document.visibilityState !== 'hidden';
+}
+
+function installCustomCssDebugFunction() {
+    if (typeof globalThis === 'undefined') {
+        return;
+    }
+
+    globalThis[CUSTOM_CSS_DEBUG_FUNCTION_NAME] = getCustomCssDebugSnapshot;
+}
+
+function getCustomCssDebugSnapshot() {
+    const state = extensionState[CUSTOM_CSS_CODEMIRROR_EDITOR_KEY];
+    const originalInput = getCustomCssOriginalInput();
+    const style = document.getElementById(CUSTOM_CSS_STYLE_ID);
+    const shadowInput = extensionState.customCssShadowPropertyInput;
+    const values = {
+        powerUser: String(power_user.custom_css ?? ''),
+        style: style instanceof HTMLElement ? String(style.textContent ?? '') : null,
+        originalInput: originalInput instanceof HTMLTextAreaElement ? String(originalInput.value ?? '') : null,
+        codeMirrorSource: state?.source instanceof HTMLTextAreaElement ? String(state.source.value ?? '') : null,
+        codeMirrorDoc: state?.view ? getCustomCssCodeMirrorValue(state) : null,
+        shadowVirtual: typeof extensionState.customCssShadowVirtualValue === 'string'
+            ? extensionState.customCssShadowVirtualValue
+            : null,
+    };
+
+    return {
+        version: CURRENT_VERSION,
+        theme: String(power_user.theme ?? ''),
+        visibilityState: typeof document !== 'undefined' ? document.visibilityState : '',
+        documentHidden: typeof document !== 'undefined' ? document.hidden : false,
+        timestamp: new Date().toISOString(),
+        summaries: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, summarizeCustomCssDebugValue(value)])),
+        matches: {
+            stylePowerUser: compareCustomCssDebugValues(values.style, values.powerUser),
+            originalInputPowerUser: compareCustomCssDebugValues(values.originalInput, values.powerUser),
+            codeMirrorSourcePowerUser: compareCustomCssDebugValues(values.codeMirrorSource, values.powerUser),
+            codeMirrorDocPowerUser: compareCustomCssDebugValues(values.codeMirrorDoc, values.powerUser),
+            shadowVirtualPowerUser: compareCustomCssDebugValues(values.shadowVirtual, values.powerUser),
+        },
+        shadow: {
+            enabled: Boolean(settings.customCssShadowPropertyEnabled),
+            installed: Boolean(extensionState.customCssShadowPropertyInstalled),
+            inputConnected: shadowInput instanceof HTMLTextAreaElement ? shadowInput.isConnected : false,
+            inputIsCurrent: Boolean(originalInput && shadowInput === originalInput),
+        },
+        codeMirror: {
+            enabled: Boolean(state?.enabled),
+            hasView: Boolean(state?.view),
+            dirty: Boolean(state?.dirty),
+            themeSyncPending: Boolean(state?.themeSyncPending),
+            sourceConnected: state?.source instanceof HTMLTextAreaElement ? state.source.isConnected : false,
+            wrapperConnected: state?.wrapper instanceof HTMLElement ? state.wrapper.isConnected : false,
+            colorScheme: state?.colorScheme || '',
+        },
+    };
+}
+
+function summarizeCustomCssDebugValue(value) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    const text = String(value);
+    return {
+        length: text.length,
+        hash: hashCustomCssDebugValue(text),
+    };
+}
+
+function compareCustomCssDebugValues(left, right) {
+    if (left === null || left === undefined || right === null || right === undefined) {
+        return null;
+    }
+
+    return String(left) === String(right);
+}
+
+function hashCustomCssDebugValue(value) {
+    let hash = 0x811c9dc5;
+
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+
+    return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 function applyCustomCssStyleText() {
     let style = document.getElementById(CUSTOM_CSS_STYLE_ID);
 
@@ -4038,7 +4365,7 @@ function applyCustomCssStyleText() {
         document.head.append(style);
     }
 
-    style.textContent = power_user.custom_css;
+    style.textContent = String(power_user.custom_css ?? '');
 }
 
 function installCustomCssCodeMirrorEditorOptimization() {
@@ -4068,6 +4395,7 @@ function removeCustomCssCodeMirrorEditorOptimization() {
 
     state.mutationObserver?.disconnect();
     state.mutationObserver = null;
+    clearCustomCssCodeMirrorThemeSyncTimers(state);
     detachCustomCssCodeMirrorEditor(state);
 
     for (const listener of state.globalListeners || []) {
@@ -4097,6 +4425,10 @@ function getCustomCssCodeMirrorEditorState() {
             loadingToken: null,
             colorScheme: 'light',
             colorSchemeDirty: true,
+            themeSyncPending: false,
+            themeSyncToken: 0,
+            themeSyncTimers: [],
+            themeSyncFrames: [],
         };
     }
 
@@ -4143,7 +4475,8 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
         }
     };
     const pageLifecycleHandler = (event) => {
-        if (event?.type === 'visibilitychange' && document.visibilityState !== 'hidden') {
+        if (isCustomCssPageRestoreEvent(event)) {
+            scheduleCustomCssStateRestoreSync(`CodeMirror ${event?.type || 'restore'}`);
             return;
         }
 
@@ -4166,12 +4499,16 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
     document.addEventListener('click', clickHandler, true);
     document.addEventListener('change', themeChangeHandler, false);
     window.addEventListener('pagehide', pageLifecycleHandler);
+    window.addEventListener('pageshow', pageLifecycleHandler);
+    window.addEventListener('focus', pageLifecycleHandler);
     document.addEventListener('visibilitychange', pageLifecycleHandler);
 
     state.globalListeners.push(
         { target: document, type: 'click', handler: clickHandler, options: true },
         { target: document, type: 'change', handler: themeChangeHandler, options: false },
         { target: window, type: 'pagehide', handler: pageLifecycleHandler, options: undefined },
+        { target: window, type: 'pageshow', handler: pageLifecycleHandler, options: undefined },
+        { target: window, type: 'focus', handler: pageLifecycleHandler, options: undefined },
         { target: document, type: 'visibilitychange', handler: pageLifecycleHandler, options: undefined },
     );
 }
@@ -4383,6 +4720,8 @@ function refreshCustomCssCodeMirrorEditorTarget(state) {
     if (!state?.enabled) {
         return;
     }
+
+    syncCustomCssShadowPropertyTarget(String(power_user.custom_css ?? ''));
 
     const source = getCustomCssCodeMirrorSource();
 
@@ -4787,6 +5126,9 @@ function detachCustomCssCodeMirrorEditor(state) {
     state.dirty = false;
     state.syncingFromSource = false;
     state.loadingToken = null;
+    state.themeSyncPending = false;
+    state.themeSyncTimers = [];
+    state.themeSyncFrames = [];
 }
 
 function getCustomCssCodeMirrorValue(state) {
@@ -4978,6 +5320,22 @@ function flushCustomCssCodeMirrorEditor(reason, { apply = false, save = true } =
     state.flushing = true;
 
     try {
+        // A theme switch is pending re-sync: power_user.custom_css already holds
+        // the new theme's CSS, but the editor doc still shows the old one. Writing
+        // the doc back here (the tab-hidden flush can beat the rAF that re-syncs,
+        // since rAF is frozen while hidden) would clobber the new CSS with the old.
+        // Skip the write-back; refill the DOM/editor from custom_css instead.
+        // Deferred settle passes will repeat this when the tab returns.
+        if (state.themeSyncPending) {
+            syncCustomCssStateFromSettings(`${reason} while theme sync is pending`, {
+                forceEditor: true,
+                refreshTarget: false,
+                clearThemePending: false,
+            });
+
+            return false;
+        }
+
         const changed = syncCustomCssCodeMirrorToSource(state) || state.dirty;
         state.dirty = false;
 

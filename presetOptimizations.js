@@ -9353,7 +9353,6 @@ async function deletePresetVuePromptGroup(groupId) {
 }
 
 function renderPresetVuePromptControls(h, prompt, item, { favoriteMirror = false } = {}) {
-    const canDelete = isPresetPromptDeleteOrDetachAllowed(prompt);
     const canEdit = promptManager.isPromptEditAllowed?.(prompt) ?? (FORCE_EDIT_PROMPTS.has(prompt.identifier) || !prompt.marker);
     const canToggle = promptManager.isPromptToggleAllowed?.(prompt) ?? (
         prompt.marker && !FORCE_TOGGLE_PROMPTS.has(prompt.identifier)
@@ -9445,15 +9444,13 @@ function renderPresetVuePromptControls(h, prompt, item, { favoriteMirror = false
             favoriteToggle,
             groupRangeButton,
             globalLibraryButton,
-            canDelete
-                ? renderPresetVuePromptActionButton(h, {
-                    action: 'delete',
-                    icon: 'fa-trash',
-                    text: t`删除或移除`,
-                    caution: true,
-                    onClick: event => handlePresetPromptActionButtonClick(event),
-                })
-                : null,
+            renderPresetVuePromptActionButton(h, {
+                action: 'delete',
+                icon: 'fa-trash',
+                text: t`删除或移除`,
+                caution: true,
+                onClick: event => handlePresetPromptActionButtonClick(event),
+            }),
             renderPresetVuePromptActionButton(h, {
                 action: 'copy',
                 icon: 'fa-copy',
