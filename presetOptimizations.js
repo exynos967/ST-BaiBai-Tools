@@ -187,6 +187,19 @@ const FORCE_TOGGLE_PROMPTS = new Set([
     'chatHistory',
     'dialogueExamples',
 ]);
+const PRESET_CONTEXT_INJECTION_PROMPT_IDS = new Set([
+    'chatHistory',
+    'worldInfoBefore',
+    'worldInfoAfter',
+    'charDescription',
+    'charPersonality',
+    'scenario',
+    'personaDescription',
+    'dialogueExamples',
+]);
+const PRESET_EFFECTIVE_TOKEN_HEADER_CLASS = 'bai-bai-preset-effective-token-header';
+const PRESET_EFFECTIVE_TOKEN_HEADER_PENDING_TEXT = '预设总Token: 计算中';
+const PRESET_EFFECTIVE_TOKEN_HEADER_TITLE = '已启用预设条目 Token 总数（不含聊天记录、世界书、角色信息等上下文注入）';
 
 const PRESET_BACKUP_PREVIEW_PAGE_SIZE = 5;
 const PRESET_BACKUP_PREVIEW_NOTE_MAX_LENGTH = 500;
@@ -5337,7 +5350,10 @@ function renderPresetVuePromptListHeader(h, model) {
     const dragLocked = isPresetVuePromptDragLocked();
 
     return h('li', { class: `${prefix}prompt_manager_list_head`, key: 'header' }, [
-        h('span', { 'data-i18n': 'Name' }, 'Name'),
+        h('span', {
+            class: PRESET_EFFECTIVE_TOKEN_HEADER_CLASS,
+            title: PRESET_EFFECTIVE_TOKEN_HEADER_TITLE,
+        }, formatPresetEffectiveTokenHeaderText(calculatePresetEffectivePromptTokenTotal())),
         h('span', { class: 'bai-bai-preset-list-head-actions' }, [
             selecting
                 ? h('span', {
@@ -9274,7 +9290,6 @@ function togglePresetVuePromptGroupEnabled(groupId) {
 
     group.enabled = group.enabled === false;
     const groupItem = manager.state?.items?.find(item => item?.type === 'group' && item.groupId === groupId);
-    const children = Array.isArray(groupItem?.children) ? groupItem.children : [];
 
     if (groupItem) {
         groupItem.enabled = group.enabled;
@@ -9284,14 +9299,7 @@ function togglePresetVuePromptGroupEnabled(groupId) {
         }
     }
 
-    const counts = promptManager.tokenHandler?.getCounts?.();
-
-    for (const child of children) {
-        if (counts && child?.id) {
-            counts[child.id] = null;
-        }
-    }
-
+    updatePresetEffectiveTokenHeaderDisplay();
     savePresetPromptGroupSettings();
     refreshPromptManagerTokensDebounced();
 }
@@ -11454,10 +11462,38 @@ async function runPromptManagerContextTokenRefresh(reason, attempt = 0, allowNoC
 
 async function refreshPromptManagerTokensForMissingContext() {
     const contextRefreshState = getPresetContextTokenRefreshState();
+    const queueState = getPromptManagerTokenRefreshQueueState();
     contextRefreshState.inFlight = true;
+    const startedSignature = getPromptManagerTokenRefreshSignature();
+    const startedEffectiveTokenCountSignature = getPresetEffectiveTokenCountSignature();
+    const startedEffectiveTokenCountsCurrent = arePromptManagerTokenCountsCurrent();
+    queueState.lastSignature = '';
+    if (!startedEffectiveTokenCountsCurrent) {
+        queueState.lastEffectiveTokenCountSignature = '';
+        updatePresetEffectiveTokenHeaderDisplay(null);
+    }
 
     try {
-        await refreshPromptManagerStaticTokensWithoutChatContext();
+        const refreshed = await refreshPromptManagerStaticTokensWithoutChatContext();
+        if (refreshed) {
+            const completedSignature = getPromptManagerTokenRefreshSignature();
+            const completedEffectiveTokenCountSignature = getPresetEffectiveTokenCountSignature();
+
+            if (startedSignature && completedSignature === startedSignature) {
+                queueState.lastSignature = startedSignature;
+            } else {
+                queueState.lastSignature = '';
+                queueState.pendingAfterFlight = true;
+            }
+
+            if (startedEffectiveTokenCountSignature && completedEffectiveTokenCountSignature === startedEffectiveTokenCountSignature) {
+                queueState.lastEffectiveTokenCountSignature = startedEffectiveTokenCountSignature;
+            } else if (startedEffectiveTokenCountSignature) {
+                queueState.lastEffectiveTokenCountSignature = '';
+                updatePresetEffectiveTokenHeaderDisplay(null);
+                queueState.pendingAfterFlight = true;
+            }
+        }
         if (isPresetVuePromptListManagerActive()) {
             // Vue 列表已激活时,跳过 ST 原生 renderPromptManagerListWithoutTokenStats:
             // 它内部的 promptManager.renderPromptManager() 会重建整个面板 DOM、抹掉
@@ -12856,6 +12892,180 @@ function getPromptTokenWarning({ prompt, tokens, isTokenUsageWarning }) {
     return result;
 }
 
+function getPresetEffectiveTokenGroupContext() {
+    if (!isPresetGroupingEnabled()) {
+        return null;
+    }
+
+    const groupState = getPresetPromptGroupState();
+    const groups = Array.isArray(groupState?.groups) ? groupState.groups : [];
+    return {
+        promptGroups: groupState?.prompts ?? {},
+        groupsById: new Map(groups.map(group => [String(group?.id ?? ''), group])),
+    };
+}
+
+function isPresetPromptIncludedInEffectiveTokenTotal(prompt, orderEntry, groupContext = null) {
+    const promptId = prompt?.identifier;
+
+    if (!promptId || orderEntry?.enabled === false || PRESET_CONTEXT_INJECTION_PROMPT_IDS.has(promptId)) {
+        return false;
+    }
+
+    if (!isPresetGroupingEnabled()) {
+        return true;
+    }
+
+    const context = groupContext ?? getPresetEffectiveTokenGroupContext();
+    const groupId = context?.promptGroups?.[promptId]?.groupId;
+
+    if (!groupId) {
+        return true;
+    }
+
+    const group = context?.groupsById?.get(String(groupId));
+
+    return group?.enabled !== false;
+}
+
+function normalizePresetEffectiveTokenCount(value) {
+    if (value === null) {
+        return null;
+    }
+
+    if (value === undefined) {
+        return 0;
+    }
+
+    const tokens = Number(value);
+    return Number.isFinite(tokens) && tokens >= 0 ? Math.round(tokens) : 0;
+}
+
+function getPresetEffectiveTokenCountSignature() {
+    try {
+        const serviceSettings = promptManager?.serviceSettings ?? oai_settings;
+        const prompts = Array.isArray(serviceSettings?.prompts)
+            ? serviceSettings.prompts.filter(Boolean)
+            : [];
+        const promptOrder = promptManager?.getPromptOrderForCharacter?.(promptManager.activeCharacter) ?? [];
+        const promptById = new Map(prompts.map(prompt => [prompt.identifier, prompt]));
+        const promptParts = [];
+
+        for (const orderEntry of promptOrder) {
+            const promptId = orderEntry?.identifier || '';
+            if (!promptId || PRESET_CONTEXT_INJECTION_PROMPT_IDS.has(promptId)) {
+                continue;
+            }
+
+            const prompt = promptById.get(promptId);
+
+            promptParts.push([
+                promptId,
+                prompt?.role || '',
+                prompt?.marker ? 1 : 0,
+                getStringHash(String(prompt?.content ?? '')),
+            ].join(':'));
+        }
+
+        return [
+            getTokenizerModel(),
+            promptParts.join('|'),
+        ].join('||');
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} Failed to build preset effective token count signature`, error);
+        return '';
+    }
+}
+
+function arePromptManagerTokenCountsCurrent() {
+    const signature = getPresetEffectiveTokenCountSignature();
+    const queueState = getPromptManagerTokenRefreshQueueState();
+
+    return Boolean(
+        signature
+        && queueState.lastEffectiveTokenCountSignature
+        && signature === queueState.lastEffectiveTokenCountSignature
+    );
+}
+
+function calculatePresetEffectivePromptTokenTotal() {
+    const counts = promptManager?.tokenHandler?.getCounts?.();
+    const promptOrder = promptManager?.getPromptOrderForCharacter?.(promptManager.activeCharacter) ?? [];
+    const prompts = Array.isArray(promptManager?.serviceSettings?.prompts)
+        ? promptManager.serviceSettings.prompts.filter(Boolean)
+        : [];
+
+    if (!counts || !promptOrder.length || !prompts.length) {
+        return null;
+    }
+
+    const promptById = new Map(prompts.map(prompt => [prompt.identifier, prompt]));
+    const allowCurrentCounts = arePromptManagerTokenCountsCurrent();
+
+    if (!allowCurrentCounts) {
+        return null;
+    }
+
+    const groupContext = getPresetEffectiveTokenGroupContext();
+    let total = 0;
+    let includedCount = 0;
+
+    for (const orderEntry of promptOrder) {
+        const prompt = promptById.get(orderEntry?.identifier);
+
+        if (!isPresetPromptIncludedInEffectiveTokenTotal(prompt, orderEntry, groupContext)) {
+            continue;
+        }
+
+        includedCount += 1;
+        const tokens = normalizePresetEffectiveTokenCount(counts[prompt.identifier]);
+
+        if (tokens === null) {
+            return null;
+        }
+
+        total += tokens;
+    }
+
+    return includedCount > 0 ? Math.round(total) : 0;
+}
+
+function formatPresetEffectiveTokenHeaderText(value) {
+    if (value === null || value === undefined) {
+        return PRESET_EFFECTIVE_TOKEN_HEADER_PENDING_TEXT;
+    }
+
+    const total = Number(value);
+    return `预设总Token: ${Number.isFinite(total) ? Math.max(0, Math.round(total)) : 0}`;
+}
+
+function updatePresetEffectiveTokenHeaderDisplay(value = undefined) {
+    if (!isPresetGroupingEnabled()) {
+        return false;
+    }
+
+    const list = document.querySelector(PRESET_PROMPT_MANAGER_LIST_SELECTOR);
+    const label = list?.querySelector(`li.completion_prompt_manager_list_head span.${PRESET_EFFECTIVE_TOKEN_HEADER_CLASS}`);
+
+    if (!label) {
+        return false;
+    }
+
+    const nextText = formatPresetEffectiveTokenHeaderText(
+        value === undefined ? calculatePresetEffectivePromptTokenTotal() : value,
+    );
+
+    if (label.textContent !== nextText) {
+        label.textContent = nextText;
+    }
+
+    if (label.title !== PRESET_EFFECTIVE_TOKEN_HEADER_TITLE) {
+        label.title = PRESET_EFFECTIVE_TOKEN_HEADER_TITLE;
+    }
+
+    return true;
+}
+
 function schedulePromptManagerDraggableInit() {
     const initId = (extensionState.promptManagerDraggableInitId ?? 0) + 1;
     extensionState.promptManagerDraggableInitId = initId;
@@ -12974,15 +13184,8 @@ function handlePresetPromptToggleClick(event) {
 
     promptOrderEntry.enabled = !promptOrderEntry.enabled;
 
-    const counts = promptManager.tokenHandler?.getCounts?.();
-
-    if (counts) {
-        counts[promptId] = null;
-    }
-
     for (const promptRow of findPromptManagerRows(promptId)) {
         updatePromptToggleRow(promptRow, promptRow.querySelector('.prompt-manager-toggle-action'), promptOrderEntry.enabled);
-        updatePromptTokenCell(promptRow, null);
     }
 
     // DOM 与 Vue model 已就地同步;若成功,刷新签名基线,
@@ -12991,6 +13194,7 @@ function handlePresetPromptToggleClick(event) {
     if (vueUpdated && isPresetVuePromptListManagerActive()) {
         markPresetVuePromptListSyncSignatureCurrent();
     }
+    updatePresetEffectiveTokenHeaderDisplay();
     markPresetPromptServiceSettingsSavePending();
     markOpenAiPresetSavePending();
 
@@ -13345,6 +13549,7 @@ function getPromptManagerTokenRefreshQueueState() {
             pendingAfterFlight: false,
             pendingWhileHidden: false,
             lastSignature: '',
+            lastEffectiveTokenCountSignature: '',
             force: false,
             forceVisible: false,
             displayFrame: 0,
@@ -13352,7 +13557,18 @@ function getPromptManagerTokenRefreshQueueState() {
         };
     }
 
-    return extensionState[PROMPT_MANAGER_TOKEN_REFRESH_QUEUE_KEY];
+    const state = extensionState[PROMPT_MANAGER_TOKEN_REFRESH_QUEUE_KEY];
+    if (typeof state.lastEffectiveTokenCountSignature !== 'string') {
+        state.lastEffectiveTokenCountSignature = typeof state.lastEffectiveTokenSignature === 'string'
+            ? state.lastEffectiveTokenSignature
+            : '';
+    }
+
+    if (Object.prototype.hasOwnProperty.call(state, 'lastEffectiveTokenSignature')) {
+        delete state.lastEffectiveTokenSignature;
+    }
+
+    return state;
 }
 
 function schedulePromptManagerTokenRefresh(reason = 'prompt manager token refresh', {
@@ -13481,14 +13697,37 @@ async function refreshPromptManagerTokens({ reason = 'prompt manager token refre
         const queueState = getPromptManagerTokenRefreshQueueState();
         const signature = getPromptManagerTokenRefreshSignature();
         if (!force && signature && signature === queueState.lastSignature && arePromptManagerTokenCountsComplete()) {
+            queueState.lastEffectiveTokenCountSignature = getPresetEffectiveTokenCountSignature();
             schedulePromptManagerTokenDisplayUpdate();
             return;
         }
 
         contextRefreshState.inFlight = true;
         const startedAt = performance.now?.() ?? Date.now();
+        const startedSignature = signature;
+        const startedEffectiveTokenCountSignature = getPresetEffectiveTokenCountSignature();
+        const startedEffectiveTokenCountsCurrent = arePromptManagerTokenCountsCurrent();
+        queueState.lastSignature = '';
+        if (!startedEffectiveTokenCountsCurrent) {
+            queueState.lastEffectiveTokenCountSignature = '';
+            updatePresetEffectiveTokenHeaderDisplay(null);
+        }
         await promptManager.tryGenerate();
-        queueState.lastSignature = getPromptManagerTokenRefreshSignature() || signature;
+        const completedSignature = getPromptManagerTokenRefreshSignature();
+        const completedEffectiveTokenCountSignature = getPresetEffectiveTokenCountSignature();
+        if (startedSignature && completedSignature === startedSignature) {
+            queueState.lastSignature = startedSignature;
+        } else {
+            queueState.lastSignature = '';
+            queueState.pendingAfterFlight = true;
+        }
+        if (startedEffectiveTokenCountSignature && completedEffectiveTokenCountSignature === startedEffectiveTokenCountSignature) {
+            queueState.lastEffectiveTokenCountSignature = startedEffectiveTokenCountSignature;
+        } else if (startedEffectiveTokenCountSignature) {
+            queueState.lastEffectiveTokenCountSignature = '';
+            updatePresetEffectiveTokenHeaderDisplay(null);
+            queueState.pendingAfterFlight = true;
+        }
         if (isPresetVuePromptListManagerActive()) {
             syncPresetVuePromptListManagerState();
         }
@@ -13547,7 +13786,6 @@ function getPromptManagerTokenRefreshSignature() {
             ? [
                 chat.length,
                 lastMessage.send_date || '',
-                lastMessage.extra?.gen_id || '',
                 getStringHash(String(lastMessage.mes ?? lastMessage.content ?? '').slice(-512)),
             ].join(':')
             : `${chat.length}:`;
@@ -14380,6 +14618,8 @@ function markPromptManagerTokensPendingNow() {
             totalContainer.replaceChildren(totalLabel, document.createTextNode(nextText));
         }
     }
+
+    updatePresetEffectiveTokenHeaderDisplay(arePromptManagerTokenCountsCurrent() ? undefined : null);
 }
 
 function updatePromptManagerTokenDisplay() {
@@ -14418,6 +14658,8 @@ function updatePromptManagerTokenDisplay() {
             totalContainer.replaceChildren(totalLabel, document.createTextNode(nextText));
         }
     }
+
+    updatePresetEffectiveTokenHeaderDisplay(calculatePresetEffectivePromptTokenTotal());
 }
 
 function applyPresetPromptCodeMirrorEditorOptimization() {
