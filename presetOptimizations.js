@@ -13990,12 +13990,12 @@ async function deletePresetGlobalLibraryGroup(groupId) {
     }
 }
 
-async function togglePresetGlobalLibraryGroupCollapsed(groupId) {
+function togglePresetGlobalLibraryGroupCollapsed(groupId) {
     if (!groupId) {
         return;
     }
 
-    // 先就地翻转 model 让 UI 立即响应(纯 CSS 折叠),再异步持久化。
+    // UI-only state: expanding/collapsing global-library groups must not hit storage.
     const model = getPresetVuePromptListManagerState().state;
     const modelGroup = model?.globalLibrary?.groups?.find(group => group.groupId === groupId);
     const nextCollapsed = modelGroup ? !modelGroup.collapsed : true;
@@ -14008,17 +14008,6 @@ async function togglePresetGlobalLibraryGroupCollapsed(groupId) {
     manager.globalLibraryGroups = normalizePresetGlobalPromptLibraryGroups(manager.globalLibraryGroups)
         .map(group => group.id === groupId ? { ...group, collapsed: nextCollapsed } : group);
     markPresetVuePromptListSyncSignatureCurrent();
-
-    try {
-        await updatePresetGlobalPromptLibrary(library => {
-            library.groups = library.groups.map(group => group.id === groupId
-                ? { ...group, collapsed: nextCollapsed }
-                : group);
-            return library;
-        });
-    } catch (error) {
-        console.debug(`${LOG_PREFIX} Failed to persist global library group collapse`, error);
-    }
 }
 
 function getPresetGlobalLibraryItemIdFromAction(action) {
