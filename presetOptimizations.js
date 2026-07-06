@@ -5545,6 +5545,7 @@ function syncPresetVuePromptListManagerState() {
 
     const { renderSignature, structureSignature } = getPresetVuePromptListSyncSignatures(manager);
     if (renderSignature && manager.lastSyncSignature === renderSignature) {
+        syncPresetVueGlobalLibrarySelectionState(manager.state);
         manager.lastStructureSignature = structureSignature;
         return true;
     }
@@ -5618,14 +5619,11 @@ function getPresetVuePromptListSyncSignatures(manager = getPresetVuePromptListMa
         prompts: groupState.prompts ?? {},
     });
     const favoriteSignature = JSON.stringify(favoriteState);
-    const selectedGlobalLibraryIds = getPresetGlobalLibrarySelectedIds(manager);
     const globalLibrarySignature = JSON.stringify({
         collapsed: Boolean(manager.globalLibraryCollapsed),
         loading: Boolean(manager.globalLibraryLoading),
         loaded: Boolean(manager.globalLibraryLoaded),
         error: manager.globalLibraryError ? String(manager.globalLibraryError) : '',
-        selecting: Boolean(manager.globalLibrarySelecting),
-        selected: Array.from(selectedGlobalLibraryIds).sort(),
         groups: normalizePresetGlobalPromptLibraryGroups(manager.globalLibraryGroups)
             .map(group => [group.id || '', group.name || '', group.collapsed ? 1 : 0]),
         items: normalizePresetGlobalPromptLibraryItems(manager.globalLibraryItems)
@@ -5937,22 +5935,36 @@ function buildPresetVueGlobalLibraryItem() {
     const validGroupIds = new Set(groups.map(group => group.id));
     const selectedIds = getPresetGlobalLibrarySelectedIds(manager);
     const selecting = Boolean(manager.globalLibrarySelecting);
-    const toNode = item => ({
-        id: item.id,
-        name: item.name,
-        content: item.content,
-        groupId: item.groupId && validGroupIds.has(item.groupId) ? item.groupId : null,
-        type: 'global-library-prompt',
-        selecting,
-        selected: selectedIds.has(item.id),
-    });
-    const ungrouped = items
-        .filter(item => !item.groupId || !validGroupIds.has(item.groupId))
-        .map(toNode);
+    const ungrouped = [];
+    const childrenByGroupId = new Map(groups.map(group => [group.id, []]));
+    let selectedCount = 0;
+
+    for (const item of items) {
+        const groupId = item.groupId && validGroupIds.has(item.groupId) ? item.groupId : null;
+        const selected = selectedIds.has(item.id);
+        const node = {
+            id: item.id,
+            name: item.name,
+            content: item.content,
+            groupId,
+            type: 'global-library-prompt',
+            selecting,
+            selected,
+        };
+
+        if (selected) {
+            selectedCount += 1;
+        }
+
+        if (groupId) {
+            childrenByGroupId.get(groupId)?.push(node);
+        } else {
+            ungrouped.push(node);
+        }
+    }
+
     const groupNodes = groups.map(group => {
-        const children = items
-            .filter(item => item.groupId === group.id)
-            .map(toNode);
+        const children = childrenByGroupId.get(group.id) ?? [];
 
         return {
             id: `global-library-group:${group.id}`,
@@ -5970,7 +5982,7 @@ function buildPresetVueGlobalLibraryItem() {
         type: 'global-library',
         count: items.length,
         selecting,
-        selectedCount: items.reduce((total, item) => total + (selectedIds.has(item.id) ? 1 : 0), 0),
+        selectedCount,
         collapsed: Boolean(manager.globalLibraryCollapsed),
         loading: Boolean(manager.globalLibraryLoading),
         error: manager.globalLibraryError ? String(manager.globalLibraryError) : '',
@@ -5985,7 +5997,126 @@ function syncPresetVueGlobalLibraryModelState(model) {
         return;
     }
 
-    model.globalLibrary = buildPresetVueGlobalLibraryItem();
+    const nextLibrary = buildPresetVueGlobalLibraryItem();
+
+    if (!model.globalLibrary) {
+        model.globalLibrary = nextLibrary;
+        return;
+    }
+
+    const library = model.globalLibrary;
+    library.id = nextLibrary.id;
+    library.type = nextLibrary.type;
+    library.count = nextLibrary.count;
+    library.selecting = nextLibrary.selecting;
+    library.selectedCount = nextLibrary.selectedCount;
+    library.collapsed = nextLibrary.collapsed;
+    library.loading = nextLibrary.loading;
+    library.error = nextLibrary.error;
+    library.hasGroups = nextLibrary.hasGroups;
+    library.ungrouped = syncPresetVueGlobalLibraryNodeList(library.ungrouped, nextLibrary.ungrouped);
+    library.groups = syncPresetVueGlobalLibraryGroupList(library.groups, nextLibrary.groups);
+}
+
+function syncPresetVueGlobalLibraryNodeList(currentList, nextList) {
+    const currentById = new Map(
+        (Array.isArray(currentList) ? currentList : [])
+            .filter(item => item?.id)
+            .map(item => [item.id, item]),
+    );
+    const synced = nextList.map(nextItem => {
+        const currentItem = currentById.get(nextItem.id);
+
+        if (!currentItem) {
+            return nextItem;
+        }
+
+        currentItem.name = nextItem.name;
+        currentItem.content = nextItem.content;
+        currentItem.groupId = nextItem.groupId;
+        currentItem.type = nextItem.type;
+        currentItem.selecting = nextItem.selecting;
+        currentItem.selected = nextItem.selected;
+        return currentItem;
+    });
+
+    if (Array.isArray(currentList)) {
+        currentList.splice(0, currentList.length, ...synced);
+        return currentList;
+    }
+
+    return synced;
+}
+
+function syncPresetVueGlobalLibraryGroupList(currentList, nextList) {
+    const currentById = new Map(
+        (Array.isArray(currentList) ? currentList : [])
+            .filter(group => group?.groupId)
+            .map(group => [group.groupId, group]),
+    );
+    const synced = nextList.map(nextGroup => {
+        const currentGroup = currentById.get(nextGroup.groupId);
+
+        if (!currentGroup) {
+            return nextGroup;
+        }
+
+        currentGroup.id = nextGroup.id;
+        currentGroup.type = nextGroup.type;
+        currentGroup.groupId = nextGroup.groupId;
+        currentGroup.name = nextGroup.name;
+        currentGroup.collapsed = nextGroup.collapsed;
+        currentGroup.count = nextGroup.count;
+        currentGroup.children = syncPresetVueGlobalLibraryNodeList(currentGroup.children, nextGroup.children);
+        return currentGroup;
+    });
+
+    if (Array.isArray(currentList)) {
+        currentList.splice(0, currentList.length, ...synced);
+        return currentList;
+    }
+
+    return synced;
+}
+
+function syncPresetVueGlobalLibrarySelectionState(model = getPresetVuePromptListManagerState().state) {
+    const library = model?.globalLibrary;
+
+    if (!library) {
+        return false;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    const selectedIds = getPresetGlobalLibrarySelectedIds(manager);
+    const selecting = Boolean(manager.globalLibrarySelecting);
+    let selectedCount = 0;
+    const syncNode = node => {
+        if (!node?.id) {
+            return;
+        }
+
+        const selected = selectedIds.has(node.id);
+        node.selecting = selecting;
+        node.selected = selected;
+
+        if (selected) {
+            selectedCount += 1;
+        }
+    };
+
+    for (const node of library.ungrouped ?? []) {
+        syncNode(node);
+    }
+
+    for (const group of library.groups ?? []) {
+        for (const node of group.children ?? []) {
+            syncNode(node);
+        }
+    }
+
+    library.selecting = selecting;
+    library.selectedCount = selectedCount;
+    return true;
 }
 
 function buildPresetVuePromptListItems() {
@@ -7576,6 +7707,19 @@ function buildPresetVueGlobalLibraryDraggableProps(list, { groupId }) {
 
 function renderPresetVueGlobalLibraryDraggable(h, vueDraggableNext, list, { groupId }) {
     const items = Array.isArray(list) ? list : [];
+    const selecting = Boolean(getPresetVuePromptListManagerState().state?.globalLibrary?.selecting);
+
+    if (selecting || !vueDraggableNext?.VueDraggableNext) {
+        return h('ul', {
+            class: [
+                'bai-bai-preset-group-list',
+                'bai-bai-preset-global-library-list',
+                items.length ? '' : 'bai-bai-preset-group-list-empty',
+            ],
+            'data-global-library-group-id': groupId || '',
+        }, items.map(child => renderPresetVuePromptGlobalLibraryRow(h, child)));
+    }
+
     const draggableProps = buildPresetVueGlobalLibraryDraggableProps(items, { groupId });
 
     return h(vueDraggableNext.VueDraggableNext, draggableProps, {
@@ -7647,7 +7791,7 @@ function renderPresetVueGlobalLibraryGroup(h, vueDraggableNext, group) {
             class: 'bai-bai-preset-group-body',
             'aria-hidden': group.collapsed ? 'true' : 'false',
         }, [
-            h('div', { class: 'bai-bai-preset-group-body-inner' }, [
+            h('div', { class: 'bai-bai-preset-group-body-inner' }, group.collapsed ? [] : [
                 renderPresetVueGlobalLibraryDraggable(h, vueDraggableNext, group.children, { groupId: group.groupId }),
             ]),
         ]),
@@ -10271,6 +10415,8 @@ function togglePresetVuePromptGlobalLibraryCollapsed() {
         if (nextCollapsed) {
             schedulePresetVuePromptGroupBodyUnmount(mountId);
         }
+
+        markPresetVuePromptListSyncSignatureCurrent();
     });
 }
 
@@ -10282,7 +10428,7 @@ function togglePresetGlobalLibrarySelecting() {
         getPresetGlobalLibrarySelectedIds(manager).clear();
     }
 
-    syncPresetVuePromptListManagerState();
+    syncPresetVueGlobalLibrarySelectionState(manager.state);
 }
 
 function togglePresetGlobalLibrarySelectedItem(itemId) {
@@ -10299,7 +10445,7 @@ function togglePresetGlobalLibrarySelectedItem(itemId) {
         selectedIds.add(itemId);
     }
 
-    syncPresetVuePromptListManagerState();
+    syncPresetVueGlobalLibrarySelectionState(manager.state);
 }
 
 function getPresetGlobalLibrarySelectedItemIds() {
@@ -16201,6 +16347,7 @@ function getPresetPromptCodeMirrorEditorState() {
             listeners: [],
             globalListeners: [],
             mutationObserver: null,
+            mutationObserverTargets: [],
             refreshFrame: 0,
             dirty: false,
             flushing: false,
@@ -16245,11 +16392,6 @@ function installPresetPromptCodeMirrorEditorGlobalListeners(state) {
             schedulePresetPromptCodeMirrorEditorRefresh(state, { forceFromSource: true });
         }
     };
-    const inputHandler = (event) => {
-        if (event.target === state.source) {
-            schedulePresetPromptCodeMirrorEditorRefresh(state, { forceFromSource: true });
-        }
-    };
     const blurHandler = (event) => {
         const target = event.target instanceof HTMLTextAreaElement ? event.target : null;
 
@@ -16260,41 +16402,129 @@ function installPresetPromptCodeMirrorEditorGlobalListeners(state) {
     const pageLifecycleHandler = () => {
         flushPresetPromptCodeMirrorEditor('page lifecycle');
     };
-
-    document.addEventListener('click', clickHandler, true);
-    document.addEventListener('input', inputHandler, true);
-    document.addEventListener('blur', blurHandler, true);
-    window.addEventListener('pagehide', pageLifecycleHandler);
-    document.addEventListener('visibilitychange', pageLifecycleHandler);
-
-    state.globalListeners.push(
-        { target: document, type: 'click', handler: clickHandler, options: true },
-        { target: document, type: 'input', handler: inputHandler, options: true },
-        { target: document, type: 'blur', handler: blurHandler, options: true },
-        { target: window, type: 'pagehide', handler: pageLifecycleHandler, options: undefined },
-        { target: document, type: 'visibilitychange', handler: pageLifecycleHandler, options: undefined },
-    );
-}
-
-function installPresetPromptCodeMirrorEditorMutationObserver(state) {
-    if (state.mutationObserver || typeof MutationObserver !== 'function') {
-        return;
-    }
-
-    const root = document.body || document.documentElement;
-
-    if (!root) {
-        return;
-    }
-
-    state.mutationObserver = new MutationObserver((mutations) => {
-        if (arePresetPromptCodeMirrorMutationsInternal(state, mutations)) {
+    const addListener = (target, type, handler, options) => {
+        if (!(target instanceof EventTarget) || target === document) {
             return;
         }
 
-        schedulePresetPromptCodeMirrorEditorRefresh(state);
-    });
-    state.mutationObserver.observe(root, { childList: true, subtree: true });
+        target.addEventListener(type, handler, options);
+        state.globalListeners.push({ target, type, handler, options });
+    };
+
+    for (const target of getPresetPromptCodeMirrorListenerTargets()) {
+        addListener(target, 'click', clickHandler, true);
+        addListener(target, 'blur', blurHandler, true);
+    }
+
+    addListener(window, 'pagehide', pageLifecycleHandler);
+}
+
+function installPresetPromptCodeMirrorEditorMutationObserver(state) {
+    if (typeof MutationObserver !== 'function') {
+        return;
+    }
+
+    if (!state.mutationObserver) {
+        state.mutationObserver = new MutationObserver((mutations) => {
+            if (
+                arePresetPromptCodeMirrorMutationsInternal(state, mutations)
+                || arePresetPromptCodeMirrorMutationsPresetListOnly(state, mutations)
+            ) {
+                return;
+            }
+
+            schedulePresetPromptCodeMirrorEditorRefresh(state);
+        });
+    }
+
+    bindPresetPromptCodeMirrorEditorMutationObserver(state);
+}
+
+function getPresetPromptCodeMirrorListenerTargets() {
+    const targets = new Set();
+    const add = target => {
+        if (target instanceof HTMLElement && target.isConnected) {
+            targets.add(target);
+        }
+    };
+    const source = getPresetPromptCodeMirrorSource();
+
+    add(document.querySelector('#completion_prompt_manager'));
+    add(document.querySelector(OPENAI_SETTINGS_SELECTOR));
+    add(source?.closest('form'));
+    add(source?.closest('dialog.popup, .popup, #completion_prompt_manager'));
+    add(source?.parentElement);
+    return [...targets];
+}
+
+function bindPresetPromptCodeMirrorEditorMutationObserver(state) {
+    if (!state?.mutationObserver) {
+        return;
+    }
+
+    const targets = getPresetPromptCodeMirrorMutationTargets(state);
+    const currentTargets = state.mutationObserverTargets || [];
+    const unchanged = currentTargets.length === targets.length
+        && currentTargets.every((current, index) => current.target === targets[index].target && current.optionsKey === targets[index].optionsKey);
+
+    if (unchanged) {
+        return;
+    }
+
+    state.mutationObserver.disconnect();
+
+    for (const { target, options } of targets) {
+        state.mutationObserver.observe(target, options);
+    }
+
+    state.mutationObserverTargets = targets;
+}
+
+function getPresetPromptCodeMirrorMutationTargets(state) {
+    const targetMap = new Map();
+    const hostOptions = {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'hidden', 'data-for', 'disabled'],
+        childList: true,
+        subtree: true,
+    };
+    const parentOptions = {
+        childList: true,
+        subtree: false,
+    };
+    const addTarget = (target, optionsKey, options) => {
+        if (!(target instanceof Node) || !target.isConnected || target === document) {
+            return;
+        }
+
+        const existing = targetMap.get(target);
+
+        if (!existing || existing.optionsKey === 'parent') {
+            targetMap.set(target, { target, optionsKey, options });
+        }
+    };
+    const addLocalRootsForElement = element => {
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
+
+        addTarget(element.parentElement, 'host', hostOptions);
+        addTarget(element.parentElement?.parentElement, 'parent', parentOptions);
+        addTarget(element.closest('form'), 'host', hostOptions);
+        addTarget(element.closest('dialog.popup, .popup'), 'host', hostOptions);
+    };
+    const source = getPresetPromptCodeMirrorSource();
+    const managerRoot = document.querySelector('#completion_prompt_manager');
+
+    addLocalRootsForElement(source);
+    addLocalRootsForElement(state.source);
+    addLocalRootsForElement(state.wrapper);
+
+    if (managerRoot instanceof HTMLElement) {
+        addTarget(managerRoot, 'host', hostOptions);
+    }
+
+    return [...targetMap.values()];
 }
 
 function arePresetPromptCodeMirrorMutationsInternal(state, mutations) {
@@ -16322,6 +16552,49 @@ function arePresetPromptCodeMirrorMutationsInternal(state, mutations) {
         }
 
         return mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0;
+    });
+}
+
+function arePresetPromptCodeMirrorMutationsPresetListOnly(state, mutations) {
+    if (!mutations?.length) {
+        return false;
+    }
+
+    const isEditorNode = node => {
+        if (!(node instanceof Node)) {
+            return false;
+        }
+
+        const source = state.source;
+        const wrapper = state.wrapper;
+
+        return (
+            source instanceof Node
+            && (node === source || node.contains?.(source) || source.contains?.(node))
+        ) || (
+            wrapper instanceof Node
+            && (node === wrapper || node.contains?.(wrapper) || wrapper.contains?.(node))
+        );
+    };
+    const isPresetListNode = node => {
+        if (!(node instanceof Node)) {
+            return false;
+        }
+
+        const element = node instanceof Element ? node : node.parentElement;
+
+        return Boolean(element?.closest?.(`${PRESET_PROMPT_MANAGER_LIST_SELECTOR}, .bai-bai-preset-global-library`));
+    };
+
+    return Array.from(mutations).every(mutation => {
+        const nodes = [
+            mutation.target,
+            ...Array.from(mutation.addedNodes ?? []),
+            ...Array.from(mutation.removedNodes ?? []),
+        ].filter(node => node instanceof Node);
+
+        return nodes.length > 0
+            && nodes.every(node => !isEditorNode(node) && isPresetListNode(node));
     });
 }
 
@@ -16353,6 +16626,7 @@ function refreshPresetPromptCodeMirrorEditorTarget(state) {
 
     if (!(source instanceof HTMLTextAreaElement) || !source.isConnected) {
         detachPresetPromptCodeMirrorEditor(state);
+        bindPresetPromptCodeMirrorEditorMutationObserver(state);
         return;
     }
 
@@ -16366,6 +16640,7 @@ function refreshPresetPromptCodeMirrorEditorTarget(state) {
         }
 
         updatePresetPromptCodeMirrorSourceClasses(state, source, state.wrapper);
+        bindPresetPromptCodeMirrorEditorMutationObserver(state);
 
         if (state.forceSyncFromSource) {
             state.forceSyncFromSource = false;
@@ -16379,6 +16654,7 @@ function refreshPresetPromptCodeMirrorEditorTarget(state) {
 
     detachPresetPromptCodeMirrorEditor(state);
     attachPresetPromptCodeMirrorEditor(state, source);
+    bindPresetPromptCodeMirrorEditorMutationObserver(state);
 }
 
 function getPresetPromptCodeMirrorSource() {
@@ -16415,11 +16691,16 @@ function attachPresetPromptCodeMirrorEditor(state, source) {
             }
         }, 0);
     };
+    const sourceInputHandler = () => {
+        schedulePresetPromptCodeMirrorEditorRefresh(state, { forceFromSource: true });
+    };
 
     wrapper.addEventListener('focusout', focusOutHandler);
+    source.addEventListener('input', sourceInputHandler, true);
 
     state.listeners.push(
-        { target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined }
+        { target: wrapper, type: 'focusout', handler: focusOutHandler, options: undefined },
+        { target: source, type: 'input', handler: sourceInputHandler, options: true },
     );
 
     const loadingToken = {};

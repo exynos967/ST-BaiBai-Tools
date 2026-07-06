@@ -23,7 +23,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.28.3';
+const CURRENT_VERSION = '0.28.4';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -3979,6 +3979,12 @@ function installCustomCssInputOptimization() {
         return;
     }
 
+    const input = document.getElementById(CUSTOM_CSS_INPUT_ID);
+
+    if (!(input instanceof HTMLTextAreaElement)) {
+        return;
+    }
+
     const inputHandler = (event) => {
         const input = getCustomCssInputFromEvent(event);
 
@@ -4045,17 +4051,17 @@ function installCustomCssInputOptimization() {
         flushCurrentCustomCssInput(`input optimization ${event?.type || 'page lifecycle'}`);
     };
 
-    document.addEventListener('input', inputHandler, true);
-    document.addEventListener('compositionstart', compositionStartHandler, true);
-    document.addEventListener('compositionend', compositionEndHandler, true);
-    document.addEventListener('change', flushHandler, true);
-    document.addEventListener('blur', flushHandler, true);
+    input.addEventListener('input', inputHandler, true);
+    input.addEventListener('compositionstart', compositionStartHandler, true);
+    input.addEventListener('compositionend', compositionEndHandler, true);
+    input.addEventListener('change', flushHandler, true);
+    input.addEventListener('blur', flushHandler, true);
     window.addEventListener('pagehide', pageLifecycleHandler);
     window.addEventListener('pageshow', pageLifecycleHandler);
     window.addEventListener('focus', pageLifecycleHandler);
-    document.addEventListener('visibilitychange', pageLifecycleHandler);
 
     extensionState[CUSTOM_CSS_INPUT_OPTIMIZATION_KEY] = {
+        input,
         inputHandler,
         compositionStartHandler,
         compositionEndHandler,
@@ -4075,15 +4081,14 @@ function removeCustomCssInputOptimization() {
     clearCustomCssCompositionEndTimer();
     extensionState.customCssInputComposing = false;
     extensionState.customCssInputCompositionCommitPending = false;
-    document.removeEventListener('input', state.inputHandler, true);
-    document.removeEventListener('compositionstart', state.compositionStartHandler, true);
-    document.removeEventListener('compositionend', state.compositionEndHandler, true);
-    document.removeEventListener('change', state.flushHandler, true);
-    document.removeEventListener('blur', state.flushHandler, true);
+    state.input?.removeEventListener('input', state.inputHandler, true);
+    state.input?.removeEventListener('compositionstart', state.compositionStartHandler, true);
+    state.input?.removeEventListener('compositionend', state.compositionEndHandler, true);
+    state.input?.removeEventListener('change', state.flushHandler, true);
+    state.input?.removeEventListener('blur', state.flushHandler, true);
     window.removeEventListener('pagehide', state.pageLifecycleHandler);
     window.removeEventListener('pageshow', state.pageLifecycleHandler);
     window.removeEventListener('focus', state.pageLifecycleHandler);
-    document.removeEventListener('visibilitychange', state.pageLifecycleHandler);
     clearCustomCssRestoreSyncTimers();
     delete extensionState[CUSTOM_CSS_INPUT_OPTIMIZATION_KEY];
 }
@@ -4405,22 +4410,40 @@ function installCustomCssCodeMirrorEditorGlobalListeners(state) {
             scheduleCustomCssCodeMirrorThemeSync();
         }
     };
+    const addListener = (target, type, handler, options) => {
+        if (!(target instanceof EventTarget) || target === document) {
+            return;
+        }
 
-    document.addEventListener('click', clickHandler, true);
-    document.addEventListener('change', themeChangeHandler, false);
-    window.addEventListener('pagehide', pageLifecycleHandler);
-    window.addEventListener('pageshow', pageLifecycleHandler);
-    window.addEventListener('focus', pageLifecycleHandler);
-    document.addEventListener('visibilitychange', pageLifecycleHandler);
+        target.addEventListener(type, handler, options);
+        state.globalListeners.push({ target, type, handler, options });
+    };
 
-    state.globalListeners.push(
-        { target: document, type: 'click', handler: clickHandler, options: true },
-        { target: document, type: 'change', handler: themeChangeHandler, options: false },
-        { target: window, type: 'pagehide', handler: pageLifecycleHandler, options: undefined },
-        { target: window, type: 'pageshow', handler: pageLifecycleHandler, options: undefined },
-        { target: window, type: 'focus', handler: pageLifecycleHandler, options: undefined },
-        { target: document, type: 'visibilitychange', handler: pageLifecycleHandler, options: undefined },
-    );
+    for (const target of getCustomCssCodeMirrorListenerTargets()) {
+        addListener(target, 'click', clickHandler, true);
+    }
+
+    addListener(document.querySelector('#themes'), 'change', themeChangeHandler, false);
+    addListener(window, 'pagehide', pageLifecycleHandler);
+    addListener(window, 'pageshow', pageLifecycleHandler);
+    addListener(window, 'focus', pageLifecycleHandler);
+}
+
+function getCustomCssCodeMirrorListenerTargets() {
+    const targets = new Set();
+    const add = target => {
+        if (target instanceof HTMLElement && target.isConnected) {
+            targets.add(target);
+        }
+    };
+    const source = getCustomCssCodeMirrorSource();
+
+    add(document.querySelector(CUSTOM_CSS_HOST_SELECTOR));
+    add(document.querySelector(CUSTOM_CSS_SETTINGS_PANEL_SELECTOR));
+    add(document.querySelector('#native-search-dropdown-new'));
+    add(source?.closest('dialog.popup, .popup'));
+    add(source?.parentElement);
+    return [...targets];
 }
 
 function installCustomCssCodeMirrorEditorMutationObserver(state) {
@@ -4517,10 +4540,6 @@ function getCustomCssCodeMirrorMutationTargets(state) {
     } else if (settingsPanel instanceof HTMLElement) {
         addTarget(settingsPanel, 'host', hostOptions);
         addTarget(settingsPanel.parentElement, 'parent', parentOptions);
-    }
-
-    if (!targetMap.size) {
-        addTarget(document.body || document.documentElement, 'parent', parentOptions);
     }
 
     return [...targetMap.values()];
@@ -11328,6 +11347,7 @@ function getDescriptionCodeMirrorEditorState() {
             listeners: [],
             globalListeners: [],
             mutationObserver: null,
+            mutationObserverTargets: [],
             refreshFrame: 0,
             timer: 0,
             dirty: false,
@@ -11357,39 +11377,118 @@ function installDescriptionCodeMirrorEditorGlobalListeners(state) {
     const pageLifecycleHandler = () => {
         flushDescriptionCodeMirrorEditor('page lifecycle', { dispatchInput: false, save: false });
     };
-
-    document.addEventListener('click', clickHandler, true);
-    document.addEventListener('submit', submitHandler, true);
-    window.addEventListener('pagehide', pageLifecycleHandler);
-    document.addEventListener('visibilitychange', pageLifecycleHandler);
-
-    state.globalListeners.push(
-        { target: document, type: 'click', handler: clickHandler, options: true },
-        { target: document, type: 'submit', handler: submitHandler, options: true },
-        { target: window, type: 'pagehide', handler: pageLifecycleHandler, options: undefined },
-        { target: document, type: 'visibilitychange', handler: pageLifecycleHandler, options: undefined },
-    );
-}
-
-function installDescriptionCodeMirrorEditorMutationObserver(state) {
-    if (state.mutationObserver || typeof MutationObserver !== 'function') {
-        return;
-    }
-
-    const root = document.body || document.documentElement;
-
-    if (!root) {
-        return;
-    }
-
-    state.mutationObserver = new MutationObserver((mutations) => {
-        if (areDescriptionCodeMirrorMutationsInternal(state, mutations)) {
+    const addListener = (target, type, handler, options) => {
+        if (!(target instanceof EventTarget) || target === document) {
             return;
         }
 
-        scheduleDescriptionCodeMirrorEditorRefresh(state);
-    });
-    state.mutationObserver.observe(root, { childList: true, subtree: true });
+        target.addEventListener(type, handler, options);
+        state.globalListeners.push({ target, type, handler, options });
+    };
+
+    for (const target of getDescriptionCodeMirrorListenerTargets()) {
+        addListener(target, 'click', clickHandler, true);
+        addListener(target, 'submit', submitHandler, true);
+    }
+
+    addListener(window, 'pagehide', pageLifecycleHandler);
+}
+
+function installDescriptionCodeMirrorEditorMutationObserver(state) {
+    if (typeof MutationObserver !== 'function') {
+        return;
+    }
+
+    if (!state.mutationObserver) {
+        state.mutationObserver = new MutationObserver((mutations) => {
+            if (areDescriptionCodeMirrorMutationsInternal(state, mutations)) {
+                return;
+            }
+
+            scheduleDescriptionCodeMirrorEditorRefresh(state);
+        });
+    }
+
+    bindDescriptionCodeMirrorEditorMutationObserver(state);
+}
+
+function getDescriptionCodeMirrorListenerTargets() {
+    const targets = new Set();
+    const add = target => {
+        if (target instanceof HTMLElement && target.isConnected) {
+            targets.add(target);
+        }
+    };
+    const source = document.querySelector(DESCRIPTION_EDITOR_SOURCE_SELECTOR);
+
+    add(document.querySelector('#form_create'));
+    add(source?.closest('form'));
+    add(source?.parentElement);
+    return [...targets];
+}
+
+function bindDescriptionCodeMirrorEditorMutationObserver(state) {
+    if (!state?.mutationObserver) {
+        return;
+    }
+
+    const targets = getDescriptionCodeMirrorMutationTargets(state);
+    const currentTargets = state.mutationObserverTargets || [];
+    const unchanged = currentTargets.length === targets.length
+        && currentTargets.every((current, index) => current.target === targets[index].target && current.optionsKey === targets[index].optionsKey);
+
+    if (unchanged) {
+        return;
+    }
+
+    state.mutationObserver.disconnect();
+
+    for (const { target, options } of targets) {
+        state.mutationObserver.observe(target, options);
+    }
+
+    state.mutationObserverTargets = targets;
+}
+
+function getDescriptionCodeMirrorMutationTargets(state) {
+    const targetMap = new Map();
+    const hostOptions = {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'hidden', 'disabled'],
+        childList: true,
+        subtree: true,
+    };
+    const parentOptions = {
+        childList: true,
+        subtree: false,
+    };
+    const addTarget = (target, optionsKey, options) => {
+        if (!(target instanceof Node) || !target.isConnected || target === document) {
+            return;
+        }
+
+        const existing = targetMap.get(target);
+
+        if (!existing || existing.optionsKey === 'parent') {
+            targetMap.set(target, { target, optionsKey, options });
+        }
+    };
+    const addLocalRootsForElement = element => {
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
+
+        addTarget(element.parentElement, 'host', hostOptions);
+        addTarget(element.parentElement?.parentElement, 'parent', parentOptions);
+        addTarget(element.closest('form'), 'host', hostOptions);
+    };
+    const source = document.querySelector(DESCRIPTION_EDITOR_SOURCE_SELECTOR);
+
+    addLocalRootsForElement(source);
+    addLocalRootsForElement(state.source);
+    addLocalRootsForElement(state.wrapper);
+    addTarget(document.querySelector('#form_create'), 'host', hostOptions);
+    return [...targetMap.values()];
 }
 
 function areDescriptionCodeMirrorMutationsInternal(state, mutations) {
@@ -11440,16 +11539,19 @@ function refreshDescriptionCodeMirrorEditorTarget(state) {
 
     if (!(source instanceof HTMLTextAreaElement) || !source.isConnected) {
         detachDescriptionCodeMirrorEditor(state);
+        bindDescriptionCodeMirrorEditorMutationObserver(state);
         return;
     }
 
     if (state.source === source && state.wrapper?.isConnected) {
+        bindDescriptionCodeMirrorEditorMutationObserver(state);
         syncDescriptionCodeMirrorFromSourceIfClean(state);
         return;
     }
 
     detachDescriptionCodeMirrorEditor(state);
     attachDescriptionCodeMirrorEditor(state, source);
+    bindDescriptionCodeMirrorEditorMutationObserver(state);
 }
 
 function attachDescriptionCodeMirrorEditor(state, source) {
