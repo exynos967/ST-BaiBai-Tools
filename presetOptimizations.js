@@ -99,6 +99,7 @@ const PRESET_VUE_GROUP_DROP_TARGET_MIN_HEIGHT_PX = 44;
 const PRESET_PENDING_CHANGES_VISIBILITY_CHECK_DELAY_MS = 120;
 const PRESET_PENDING_CHANGES_VISIBILITY_FALLBACK_DELAY_MS = 1000;
 const PRESET_PENDING_CHANGES_FOCUSOUT_CHECK_DELAY_MS = 60;
+const PRESET_RENAME_SAVE_GATE_TIMEOUT_MS = 30000;
 const PRESET_GROUP_COMPAT_CHOICE_RESULT_BASE = 1001;
 const PRESET_VUE_POINTER_START_THRESHOLD_PX = 4;
 const PRESET_VUE_TOUCH_DRAG_DELAY_MS = 320;
@@ -455,7 +456,9 @@ function installPresetAutoBackupFetchHook() {
     };
 
     state.wrappedFetch = function baiBaiToolkitPresetAutoBackupFetch(input, init) {
-        if (state.isEnabled() && isPresetAutoBackupSourceRequest(input, init)) {
+        const isPresetSaveRequest = isPresetAutoBackupSourceRequest(input, init);
+
+        if (state.isEnabled() && isPresetSaveRequest) {
             if (state.renameSuppress) {
                 // 重命名进行中:不立即备份,只同步记住最后一次保存内容,窗口关闭时再补一次。
                 capturePresetRenameBackupBodySync(state, input, init);
@@ -466,7 +469,17 @@ function installPresetAutoBackupFetchHook() {
             }
         }
 
-        return state.originalFetch(input, init);
+        const requestPromise = state.originalFetch(input, init);
+
+        if (isPresetSaveRequest) {
+            const body = readPresetSaveBodySync(init);
+
+            if (isOpenAiPresetSaveBody(body)) {
+                trackOpenAiPresetSaveRequest(state, body, requestPromise);
+            }
+        }
+
+        return requestPromise;
     };
 
     state.wrappedFetch[PRESET_AUTO_BACKUP_FETCH_KEY] = true;
@@ -493,6 +506,10 @@ function isPresetAutoBackupSourceRequest(input, init) {
     const url = getPresetAutoBackupFetchUrl(input);
 
     if (!url) {
+        return false;
+    }
+
+    if (!url.includes(PRESET_SAVE_URL)) {
         return false;
     }
 
@@ -545,18 +562,67 @@ function capturePresetRenameBackupBodySync(state, input, init) {
         return;
     }
 
-    let body = null;
-
-    try {
-        const raw = init && typeof init.body === 'string' ? init.body : null;
-        body = raw ? JSON.parse(raw) : null;
-    } catch {
-        body = null;
-    }
+    const body = readPresetSaveBodySync(init);
 
     if (isPresetAutoBackupBody(body)) {
         state.renameSuppress.lastBody = body;
     }
+}
+
+function readPresetSaveBodySync(init) {
+    try {
+        const raw = init && typeof init.body === 'string' ? init.body : null;
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+function isOpenAiPresetSaveBody(body) {
+    return Boolean(isPresetAutoBackupBody(body) && body.apiId === 'openai');
+}
+
+function trackOpenAiPresetSaveRequest(state, body, requestPromise) {
+    if (!(state.activeOpenAiPresetSaveRequests instanceof Map)) {
+        state.activeOpenAiPresetSaveRequests = new Map();
+    }
+
+    const presetName = body.name;
+    const requests = state.activeOpenAiPresetSaveRequests.get(presetName) ?? new Set();
+    // The caller still has post-fetch work (response.json + in-memory preset cache updates).
+    // Keep the request active through the next task so rename cannot overtake that continuation.
+    const trackedPromise = Promise.resolve(requestPromise).then(
+        response => new Promise(resolve => setTimeout(resolve, 0, response)),
+        error => new Promise((_, reject) => setTimeout(reject, 0, error)),
+    );
+    requests.add(trackedPromise);
+    state.activeOpenAiPresetSaveRequests.set(presetName, requests);
+
+    const renameGate = getOpenAiPresetRenameSaveGate();
+
+    if (renameGate && (presetName === renameGate.oldName || presetName === renameGate.newName)) {
+        renameGate.latestSaveRequest = {
+            presetName,
+            revision: getPresetPromptSaveRevision(presetName),
+            promise: trackedPromise,
+        };
+    }
+
+    const cleanup = () => {
+        requests.delete(trackedPromise);
+
+        if (!requests.size) {
+            state.activeOpenAiPresetSaveRequests.delete(presetName);
+        }
+    };
+
+    trackedPromise.then(cleanup, cleanup);
+}
+
+function getActiveOpenAiPresetSaveRequests(presetName) {
+    const state = globalThis[PRESET_AUTO_BACKUP_FETCH_KEY];
+    const requests = state?.activeOpenAiPresetSaveRequests?.get(presetName);
+    return requests instanceof Set ? Array.from(requests) : [];
 }
 
 // 关闭抑制窗口并补一次最终结果备份。幂等:重复调用时窗口已关,直接返回。
@@ -577,6 +643,132 @@ function flushPresetRenameBackup() {
 
 function isPresetRenameInProgress() {
     return Boolean(globalThis[PRESET_AUTO_BACKUP_FETCH_KEY]?.renameSuppress);
+}
+
+function getOpenAiPresetRenameSaveGate() {
+    const gate = extensionState.openAiPresetRenameSaveGate;
+    return gate && typeof gate === 'object' ? gate : null;
+}
+
+function isOpenAiPresetRenameSaveGateActive() {
+    return Boolean(getOpenAiPresetRenameSaveGate());
+}
+
+function beginOpenAiPresetRenameSaveGate(oldName, newName) {
+    const existingGate = getOpenAiPresetRenameSaveGate();
+
+    if (existingGate) {
+        settleOpenAiPresetRenameSaveGate(existingGate, getOpenAiPresetRenameFallbackName(existingGate));
+    }
+
+    installPresetAutoBackupFetchHook();
+
+    let resolveCompletion;
+    const gate = {
+        oldName,
+        newName,
+        renamed: false,
+        latestSaveRequest: null,
+        finalSavedRevision: null,
+        deferredSaveTail: Promise.resolve(),
+        completionPromise: new Promise(resolve => {
+            resolveCompletion = resolve;
+        }),
+        resolveCompletion: null,
+        timeout: 0,
+    };
+
+    gate.resolveCompletion = resolveCompletion;
+    gate.timeout = setTimeout(() => {
+        if (getOpenAiPresetRenameSaveGate() !== gate) {
+            return;
+        }
+
+        console.debug(`${LOG_PREFIX} Preset rename save gate timed out`, {
+            oldName: gate.oldName,
+            newName: gate.newName,
+            renamed: gate.renamed,
+        });
+        settleOpenAiPresetRenameSaveGate(gate, getOpenAiPresetRenameFallbackName(gate));
+    }, PRESET_RENAME_SAVE_GATE_TIMEOUT_MS);
+    extensionState.openAiPresetRenameSaveGate = gate;
+
+    const activeRequests = [
+        ...getActiveOpenAiPresetSaveRequests(oldName),
+        ...getActiveOpenAiPresetSaveRequests(newName),
+    ];
+
+    return Promise.allSettled(Array.from(new Set(activeRequests)));
+}
+
+function markOpenAiPresetRenameSaveGateRenamed(oldName, newName) {
+    const gate = getOpenAiPresetRenameSaveGate();
+
+    if (!gate || gate.oldName !== oldName || gate.newName !== newName) {
+        return false;
+    }
+
+    gate.renamed = true;
+    return true;
+}
+
+function getOpenAiPresetRenameFallbackName(gate) {
+    if (gate?.renamed || oai_settings?.preset_settings_openai === gate?.newName) {
+        return gate?.newName;
+    }
+
+    return gate?.oldName;
+}
+
+function settleOpenAiPresetRenameSaveGate(gate, resolvedPresetName) {
+    if (!gate || getOpenAiPresetRenameSaveGate() !== gate) {
+        return false;
+    }
+
+    clearTimeout(gate.timeout);
+    delete extensionState.openAiPresetRenameSaveGate;
+    gate.resolveCompletion(resolvedPresetName);
+    return true;
+}
+
+async function finishOpenAiPresetRenameSaveGateAfterFinalSave() {
+    const gate = getOpenAiPresetRenameSaveGate();
+
+    if (!gate || !gate.renamed) {
+        return;
+    }
+
+    const finalSaveRequest = gate.latestSaveRequest;
+    let saved = false;
+
+    if (finalSaveRequest?.promise) {
+        try {
+            const response = await finalSaveRequest.promise;
+            saved = response?.ok !== false;
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to finish the final renamed preset save`, error);
+        }
+    }
+
+    if (saved && Number.isFinite(finalSaveRequest.revision)) {
+        gate.finalSavedRevision = finalSaveRequest.revision;
+        clearPendingPresetPromptChangesForSavedRevision(
+            finalSaveRequest.presetName,
+            finalSaveRequest.revision,
+        );
+    }
+
+    settleOpenAiPresetRenameSaveGate(gate, gate.newName);
+}
+
+function getOpenAiPresetSaveStateName(presetName) {
+    const gate = getOpenAiPresetRenameSaveGate();
+
+    if (!gate || (presetName !== gate.oldName && presetName !== gate.newName)) {
+        return presetName;
+    }
+
+    return gate.renamed ? gate.newName : gate.oldName;
 }
 
 function isPresetAutoBackupBody(body) {
@@ -3167,20 +3359,19 @@ function installPresetUpdatePendingChangesGuard() {
             return;
         }
 
-        // 重命名收尾:ST 的 update 点击(jQuery 处理器)已同步把完整 oai_settings 落盘,此时
-        // 抑制窗口里记下的就是最终内容。补一次备份并关闭窗口;同时拦掉这次原生 re-click 的
-        // 多余重复提交,清理 pending,避免再发一次预设保存。全程由事件驱动,不依赖定时器。
-        // 放在 bypass 判断之前,确保任何到达此处的 update click 都能可靠关闭抑制窗口(幂等)。
-        if (isPresetRenameInProgress()) {
+        // 重命名收尾:ST 的 jQuery update 处理器已经发出最终保存。拦掉随后触发的原生
+        // re-click,等待该保存和内存缓存更新完成后再释放重命名期间积压的插件保存。
+        if (isOpenAiPresetRenameSaveGateActive() || isPresetRenameInProgress()) {
             event.preventDefault();
             event.stopImmediatePropagation();
             flushPresetRenameBackup();
-            clearPendingPresetPromptChangesForPreset(oai_settings?.preset_settings_openai);
-            return;
-        }
 
-        if (extensionState.presetUpdatePendingChangesBypass) {
-            extensionState.presetUpdatePendingChangesBypass = false;
+            if (isOpenAiPresetRenameSaveGateActive()) {
+                void finishOpenAiPresetRenameSaveGateAfterFinalSave();
+            } else {
+                clearPendingPresetPromptChangesForPreset(oai_settings?.preset_settings_openai);
+            }
+
             return;
         }
 
@@ -3192,47 +3383,98 @@ function installPresetUpdatePendingChangesGuard() {
         event.preventDefault();
         event.stopImmediatePropagation();
 
-        void saveOpenAiPresetAfterPendingRuntimeCommit(target);
+        void saveOpenAiPresetAfterPendingRuntimeCommit();
     };
 
     extensionState[PRESET_UPDATE_PENDING_CHANGES_HANDLER_KEY] = handler;
     document.addEventListener('click', handler, true);
 }
 
-async function saveOpenAiPresetAfterPendingRuntimeCommit(updateButton) {
-    if (extensionState.presetUpdatePendingChangesSaveInFlight) {
+async function saveOpenAiPresetAfterPendingRuntimeCommit() {
+    const currentPresetName = oai_settings?.preset_settings_openai;
+    if (!currentPresetName) {
         return;
     }
 
-    extensionState.presetUpdatePendingChangesSaveInFlight = true;
+    const saveState = getOpenAiPresetSaveRequestState(currentPresetName);
+    const requestedRevision = getPresetPromptSaveRevision(currentPresetName);
+    syncOpenAiPromptManagerStateToSettings();
+    saveState.requestedRevision = Math.max(saveState.requestedRevision ?? -1, requestedRevision);
+    saveState.requestedSnapshot = getChatCompletionPresetFromSettings(oai_settings);
+
+    if (saveState.promise) {
+        await saveState.promise.catch(() => {});
+        return;
+    }
+
+    const savePromise = runOpenAiPresetSaveRequestQueue(saveState);
+    saveState.promise = savePromise;
 
     try {
-        const presetName = oai_settings?.preset_settings_openai;
-        await commitPendingPresetPromptChangesToRuntime(presetName);
-        syncOpenAiPromptManagerStateToSettings();
-        removePresetPromptManagerVisibilityWatch();
-
-        const waitForSave = waitForOpenAiPresetUpdateRequest(presetName);
-        extensionState.presetUpdatePendingChangesBypass = true;
-
-        try {
-            updateButton.click();
-        } finally {
-            if (extensionState.presetUpdatePendingChangesBypass) {
-                extensionState.presetUpdatePendingChangesBypass = false;
-            }
-        }
-
-        await saveSettingsAfterOpenAiPresetUpdate(presetName, waitForSave);
-        clearPendingPresetPromptChangesForPreset(presetName);
+        await savePromise;
     } catch (error) {
         if (hasAutoFlushPendingPresetPromptChanges()) {
             schedulePendingPresetPromptChangesFlushCheck();
         }
-        console.debug(`${LOG_PREFIX} Failed to prepare pending preset prompt changes before preset save`, error);
-        toastr.error(t`Failed to prepare preset prompt changes before saving. See console for details.`);
+        console.debug(`${LOG_PREFIX} Failed to save pending preset prompt changes`, error);
+        toastr.error(t`Failed to save preset prompt changes. See console for details.`);
     } finally {
-        extensionState.presetUpdatePendingChangesSaveInFlight = false;
+        if (saveState.promise === savePromise) {
+            saveState.promise = null;
+        }
+
+        if (!saveState.promise && saveState.requestedRevision === null && saveState.requestedSnapshot === null) {
+            const states = getOpenAiPresetSaveRequestStates();
+
+            for (const [presetName, state] of states.entries()) {
+                if (state === saveState) {
+                    states.delete(presetName);
+                }
+            }
+        }
+    }
+}
+
+async function runOpenAiPresetSaveRequestQueue(saveState) {
+    let saved = false;
+
+    while (saveState.requestedRevision !== null) {
+        const requestedRevision = saveState.requestedRevision;
+        const requestedSnapshot = saveState.requestedSnapshot;
+        saveState.requestedRevision = null;
+        saveState.requestedSnapshot = null;
+
+        let presetName = saveState.presetName;
+        await commitPendingPresetPromptChangesToRuntime(presetName);
+        presetName = saveState.presetName;
+
+        let savedRevision = requestedRevision;
+        let presetSnapshot = requestedSnapshot;
+
+        if (oai_settings?.preset_settings_openai === presetName) {
+            syncOpenAiPromptManagerStateToSettings();
+            savedRevision = getPresetPromptSaveRevision(presetName);
+            presetSnapshot = getChatCompletionPresetFromSettings(oai_settings);
+        }
+
+        if (!presetSnapshot) {
+            throw new Error(`Unable to capture OpenAI preset snapshot for ${presetName}`);
+        }
+
+        await saveOpenAiPresetSnapshot(presetName, presetSnapshot, { revision: savedRevision });
+        clearPendingPresetPromptChangesForSavedRevision(saveState.presetName, savedRevision);
+
+        if (saveState.requestedRevision !== null && saveState.requestedRevision <= savedRevision) {
+            saveState.requestedRevision = null;
+            saveState.requestedSnapshot = null;
+        }
+
+        await saveSettings();
+        saved = true;
+    }
+
+    if (saved) {
+        toastr.success(t`Preset updated`);
     }
 }
 
@@ -3286,12 +3528,60 @@ function getChatCompletionPresetFromSettings(settings = oai_settings) {
     return structuredClone(presetBody);
 }
 
-function syncCurrentOpenAiPresetCacheFromSettings(presetName = oai_settings?.preset_settings_openai) {
-    if (!presetName || !Array.isArray(openai_settings)) {
-        return false;
+function saveOpenAiPresetSnapshot(presetName, presetSnapshot, { revision = null } = {}) {
+    const renameGate = getOpenAiPresetRenameSaveGate();
+
+    if (renameGate && (presetName === renameGate.oldName || presetName === renameGate.newName)) {
+        const deferredSave = renameGate.deferredSaveTail
+            .catch(() => {})
+            .then(async () => {
+                const resolvedPresetName = await renameGate.completionPromise;
+
+                if (
+                    Number.isFinite(revision)
+                    && Number.isFinite(renameGate.finalSavedRevision)
+                    && revision <= renameGate.finalSavedRevision
+                ) {
+                    return;
+                }
+
+                await performOpenAiPresetSnapshotSave(resolvedPresetName, presetSnapshot);
+            });
+        renameGate.deferredSaveTail = deferredSave;
+        return deferredSave;
     }
 
-    syncOpenAiPromptManagerStateToSettings();
+    return performOpenAiPresetSnapshotSave(presetName, presetSnapshot);
+}
+
+async function performOpenAiPresetSnapshotSave(presetName, presetSnapshot) {
+    const presetManager = getPresetManager('openai');
+
+    if (presetManager && typeof presetManager.savePreset === 'function') {
+        await presetManager.savePreset(presetName, presetSnapshot, { skipUpdate: true });
+    } else {
+        const response = await fetch('/api/presets/save', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                apiId: 'openai',
+                name: presetName,
+                preset: presetSnapshot,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('OpenAI preset update request failed');
+        }
+    }
+
+    syncOpenAiPresetCacheFromSnapshot(presetName, presetSnapshot);
+}
+
+function syncOpenAiPresetCacheFromSnapshot(presetName, presetSnapshot) {
+    if (!presetName || !presetSnapshot || !Array.isArray(openai_settings)) {
+        return false;
+    }
 
     const value = openai_setting_names?.[presetName];
 
@@ -3299,7 +3589,7 @@ function syncCurrentOpenAiPresetCacheFromSettings(presetName = oai_settings?.pre
         return false;
     }
 
-    const preset = getChatCompletionPresetFromSettings(oai_settings);
+    const preset = structuredClone(presetSnapshot);
 
     if (openai_settings[value] && typeof openai_settings[value] === 'object') {
         Object.assign(openai_settings[value], preset);
@@ -3308,6 +3598,12 @@ function syncCurrentOpenAiPresetCacheFromSettings(presetName = oai_settings?.pre
     }
 
     return true;
+}
+
+function syncCurrentOpenAiPresetCacheFromSettings(presetName = oai_settings?.preset_settings_openai) {
+    syncOpenAiPromptManagerStateToSettings();
+    const preset = getChatCompletionPresetFromSettings(oai_settings);
+    return syncOpenAiPresetCacheFromSnapshot(presetName, preset);
 }
 
 async function confirmSavePendingPresetChangesBeforeExport(exportButton) {
@@ -5025,6 +5321,9 @@ function getPresetVuePromptListManagerState() {
             pendingPresetPromptServiceSaves: null,
             pendingPresetPromptGroupSaves: null,
             pendingOpenAiPresetSaves: null,
+            presetPromptSaveRevisions: null,
+            nextPresetPromptSaveRevision: 0,
+            openAiPresetSaveRequestStates: null,
             pendingVisibilityTimer: null,
             pendingVisibilityObserver: null,
             groupBodyUnmountTimers: null,
@@ -10908,11 +11207,65 @@ function getPendingOpenAiPresetSaves(manager = getPresetVuePromptListManagerStat
     return manager.pendingOpenAiPresetSaves;
 }
 
+function getPresetPromptSaveRevisions(manager = getPresetVuePromptListManagerState()) {
+    if (!(manager.presetPromptSaveRevisions instanceof Map)) {
+        manager.presetPromptSaveRevisions = new Map();
+    }
+
+    return manager.presetPromptSaveRevisions;
+}
+
+function getPresetPromptSaveRevision(presetName, manager = getPresetVuePromptListManagerState()) {
+    if (!presetName) {
+        return 0;
+    }
+
+    return getPresetPromptSaveRevisions(manager).get(presetName) ?? 0;
+}
+
+function markPresetPromptSaveRevisionChanged(presetName, manager = getPresetVuePromptListManagerState()) {
+    if (!presetName) {
+        return 0;
+    }
+
+    manager.nextPresetPromptSaveRevision = Number(manager.nextPresetPromptSaveRevision) || 0;
+    manager.nextPresetPromptSaveRevision += 1;
+    getPresetPromptSaveRevisions(manager).set(presetName, manager.nextPresetPromptSaveRevision);
+    return manager.nextPresetPromptSaveRevision;
+}
+
+function getOpenAiPresetSaveRequestStates(manager = getPresetVuePromptListManagerState()) {
+    if (!(manager.openAiPresetSaveRequestStates instanceof Map)) {
+        manager.openAiPresetSaveRequestStates = new Map();
+    }
+
+    return manager.openAiPresetSaveRequestStates;
+}
+
+function getOpenAiPresetSaveRequestState(presetName, manager = getPresetVuePromptListManagerState()) {
+    const states = getOpenAiPresetSaveRequestStates(manager);
+    presetName = getOpenAiPresetSaveStateName(presetName);
+
+    if (!states.has(presetName)) {
+        states.set(presetName, {
+            presetName,
+            requestedRevision: null,
+            requestedSnapshot: null,
+            promise: null,
+        });
+    }
+
+    const state = states.get(presetName);
+    state.presetName = presetName;
+    return state;
+}
+
 function markOpenAiPresetSavePending(presetName = oai_settings?.preset_settings_openai) {
     if (!presetName) {
         return;
     }
 
+    markPresetPromptSaveRevisionChanged(presetName);
     getPendingOpenAiPresetSaves().add(presetName);
 }
 
@@ -10924,6 +11277,7 @@ function markPresetPromptServiceSettingsSavePending() {
         return;
     }
 
+    markPresetPromptSaveRevisionChanged(entry.presetName, manager);
     getPendingPresetPromptServiceSaves(manager).set(entry.presetName, entry);
     manager.pendingServiceSettingsSave = true;
     markPresetPromptChangesSavePending();
@@ -10951,6 +11305,7 @@ function markPresetPromptGroupSettingsSavePending(payload = null) {
         return;
     }
 
+    markPresetPromptSaveRevisionChanged(payload.presetName, manager);
     getPendingPresetPromptGroupSaves(manager).set(payload.presetName, {
         presetName: payload.presetName,
         groupState: structuredClone(payload.groupState),
@@ -11024,6 +11379,37 @@ function clearPendingPresetPromptChangesForPreset(presetName) {
     } else {
         removePresetPromptManagerVisibilityWatch();
     }
+}
+
+function clearPendingPresetPromptChangesForSavedRevision(presetName, savedRevision) {
+    if (!presetName || getPresetPromptSaveRevision(presetName) !== savedRevision) {
+        return false;
+    }
+
+    const manager = getPresetVuePromptListManagerState();
+    const pendingServiceSaves = getPendingPresetPromptServiceSaves(manager);
+    const pendingGroupSaves = getPendingPresetPromptGroupSaves(manager);
+    const pendingPresetSaves = getPendingOpenAiPresetSaves(manager);
+    const groupEntry = pendingGroupSaves.get(presetName);
+
+    pendingServiceSaves.delete(presetName);
+    pendingGroupSaves.delete(presetName);
+    pendingPresetSaves.delete(presetName);
+
+    if (groupEntry?.syncKey && oai_settings?.preset_settings_openai === presetName) {
+        extensionState.presetPromptGroupExtensionSyncKey = groupEntry.syncKey;
+    }
+
+    manager.pendingServiceSettingsSave = pendingServiceSaves.size > 0;
+    manager.pendingGroupSettingsSave = pendingGroupSaves.size > 0;
+
+    if (hasAutoFlushPendingPresetPromptChanges()) {
+        schedulePendingPresetPromptChangesFlushCheck();
+    } else {
+        removePresetPromptManagerVisibilityWatch();
+    }
+
+    return true;
 }
 
 async function commitPendingPresetPromptChangesToRuntime(presetName = oai_settings?.preset_settings_openai) {
@@ -12401,11 +12787,19 @@ function applyPresetGroupRenameCleanup() {
 }
 
 async function handlePresetPromptGroupRenamedBefore(event) {
-    if (event?.apiId !== 'openai' || !event.oldName || !event.newName || !isPresetGroupingEnabled()) {
+    if (event?.apiId !== 'openai' || !event.oldName || !event.newName) {
         return;
     }
 
+    const activeSaveRequests = beginOpenAiPresetRenameSaveGate(event.oldName, event.newName);
+
     try {
+        await activeSaveRequests;
+
+        if (!isPresetGroupingEnabled()) {
+            return;
+        }
+
         await flushScheduledPresetVuePromptOrderSave();
         if (extensionState.presetPromptGroupRuntimePresetName === event.oldName) {
             syncCurrentPresetPromptGroupStateToPresetExtensionField({ force: true, persist: false });
@@ -12462,11 +12856,16 @@ function restoreRenamedPresetGroupStash(newName) {
 }
 
 function handlePresetPromptGroupRenamed(event) {
-    if (event?.apiId !== 'openai' || !event.oldName || !event.newName || !isPresetGroupingEnabled()) {
+    if (event?.apiId !== 'openai' || !event.oldName || !event.newName) {
         return;
     }
 
     migratePendingPresetPromptSavesAfterRename(event.oldName, event.newName);
+    markOpenAiPresetRenameSaveGateRenamed(event.oldName, event.newName);
+
+    if (!isPresetGroupingEnabled()) {
+        return;
+    }
 
     if (extensionState.presetPromptGroupRuntimePresetName === event.oldName) {
         extensionState.presetPromptGroupRuntimePresetName = event.newName;
@@ -12494,6 +12893,8 @@ function migratePendingPresetPromptSavesAfterRename(oldName, newName) {
     migratePendingPresetPromptSaveMapAfterRename(getPendingPresetPromptServiceSaves(manager), oldName, newName);
     migratePendingPresetPromptSaveMapAfterRename(getPendingPresetPromptGroupSaves(manager), oldName, newName);
     migratePendingOpenAiPresetSaveSetAfterRename(getPendingOpenAiPresetSaves(manager), oldName, newName);
+    migratePendingPresetPromptSaveRevisionAfterRename(getPresetPromptSaveRevisions(manager), oldName, newName);
+    migrateOpenAiPresetSaveRequestStateAfterRename(getOpenAiPresetSaveRequestStates(manager), oldName, newName);
 }
 
 function migratePendingPresetPromptSaveMapAfterRename(map, oldName, newName) {
@@ -12528,6 +12929,59 @@ function migratePendingOpenAiPresetSaveSetAfterRename(set, oldName, newName) {
 
     set.delete(oldName);
     set.add(newName);
+    return true;
+}
+
+function migratePendingPresetPromptSaveRevisionAfterRename(map, oldName, newName) {
+    if (!(map instanceof Map) || !map.has(oldName)) {
+        return false;
+    }
+
+    const revision = map.get(oldName);
+    map.delete(oldName);
+    map.set(newName, Math.max(Number(map.get(newName)) || 0, Number(revision) || 0));
+    return true;
+}
+
+function migrateOpenAiPresetSaveRequestStateAfterRename(map, oldName, newName) {
+    if (!(map instanceof Map) || !map.has(oldName)) {
+        return false;
+    }
+
+    const sourceState = map.get(oldName);
+    const targetState = map.get(newName);
+    map.delete(oldName);
+
+    if (!sourceState || typeof sourceState !== 'object') {
+        return false;
+    }
+
+    sourceState.presetName = newName;
+
+    if (!targetState || targetState === sourceState) {
+        map.set(newName, sourceState);
+        return true;
+    }
+
+    const sourceRevision = Number(sourceState.requestedRevision);
+    const targetRevision = Number(targetState.requestedRevision);
+
+    if (
+        sourceState.requestedRevision !== null
+        && (targetState.requestedRevision === null || sourceRevision >= targetRevision)
+    ) {
+        targetState.requestedRevision = sourceState.requestedRevision;
+        targetState.requestedSnapshot = sourceState.requestedSnapshot;
+    }
+
+    targetState.presetName = newName;
+
+    if (!targetState.promise && sourceState.promise) {
+        map.set(newName, sourceState);
+    } else {
+        map.set(newName, targetState);
+    }
+
     return true;
 }
 
@@ -14884,19 +15338,9 @@ async function saveOpenAiPresetAfterPromptEdit({ allowPresetAutoSave = false } =
 
 async function triggerOpenAiPresetUpdateAndWait(presetName = oai_settings?.preset_settings_openai) {
     syncOpenAiPromptManagerStateToSettings();
-    const waitForSave = waitForOpenAiPresetUpdateRequest(presetName);
-    extensionState.presetUpdatePendingChangesBypass = true;
-
-    try {
-        $(OPENAI_PRESET_UPDATE_SELECTOR).trigger('click');
-    } finally {
-        if (extensionState.presetUpdatePendingChangesBypass) {
-            extensionState.presetUpdatePendingChangesBypass = false;
-        }
-    }
-
-    await waitForSave;
-    syncCurrentOpenAiPresetCacheFromSettings(presetName);
+    const revision = getPresetPromptSaveRevision(presetName);
+    const presetSnapshot = getChatCompletionPresetFromSettings(oai_settings);
+    await saveOpenAiPresetSnapshot(presetName, presetSnapshot, { revision });
 }
 
 function waitForOpenAiPresetUpdateRequest(presetName) {
