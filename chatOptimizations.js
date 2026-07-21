@@ -17,7 +17,14 @@ import { timestampToMoment } from '../../../utils.js';
 
 const FAST_CHAT_SEARCH_FETCH_KEY = '__baiBaiToolkitFastChatSearchFetchPatched';
 const BAIBAOKU_FAST_SEARCH_URL = '/api/plugins/baibaoku/v1/chats/fast-search';
+const FAST_CHAT_BACKUPS_FETCH_KEY = '__baiBaiToolkitFastChatBackupsFetchPatched';
+const NATIVE_CHAT_BACKUPS_LIST_URL = '/api/backups/chat/get';
+const BAIBAOKU_FAST_CHAT_BACKUPS_LIST_URL = '/api/plugins/baibaoku/v1/chat-backups/fast-list';
 const FAST_CHAT_LIST_SCROLL_STYLE_ID = 'bai_bai_toolkit_fast_chat_list_scroll_style';
+const CHAT_BACKUP_LIST_SELECTOR = '.chatBackupsList';
+const CHAT_BACKUP_ITEM_SELECTOR = '.chatBackupsListItem';
+const CHAT_BACKUP_ITEM_INTRINSIC_SIZE_VAR = '--bai-bai-toolkit-chat-backup-item-height';
+const CHAT_BACKUP_ITEM_INTRINSIC_FALLBACK_PX = 64;
 const LONG_CHAT_DOM_RENDER_STYLE_ID = 'bai_bai_toolkit_long_chat_dom_render_style';
 const MESSAGE_EDIT_BOTTOM_ACTIONS_STYLE_ID = 'bai_bai_toolkit_message_edit_bottom_actions_style';
 const CHAT_DELETE_EDIT_HANDLER_KEY = '__baiBaiToolkitChatDeleteEditHandler';
@@ -4079,74 +4086,189 @@ function applyFastChatListScrollOptimization() {
 
     if (!settings.chatListScrollOptimizationEnabled) {
         existingStyle?.remove();
+        clearChatBackupItemIntrinsicHeightMeasurement();
         return;
     }
 
-    if (existingStyle) {
-        return;
-    }
-
-    const style = document.createElement('style');
-    style.id = FAST_CHAT_LIST_SCROLL_STYLE_ID;
-    style.textContent = `
+    if (!existingStyle) {
+        const style = document.createElement('style');
+        style.id = FAST_CHAT_LIST_SCROLL_STYLE_ID;
+        style.textContent = `
 ${CHAT_MANAGEMENT_POPUP_SELECTOR} ${CHAT_MANAGEMENT_LIST_SELECTOR} > .select_chat_block_wrapper {
     content-visibility: auto;
     contain: layout paint style;
     contain-intrinsic-size: 72px;
 }
+
+${CHAT_MANAGEMENT_POPUP_SELECTOR} ${CHAT_BACKUP_LIST_SELECTOR} > ${CHAT_BACKUP_ITEM_SELECTOR} {
+    content-visibility: auto;
+    contain: layout paint style;
+    contain-intrinsic-size: auto var(${CHAT_BACKUP_ITEM_INTRINSIC_SIZE_VAR}, ${CHAT_BACKUP_ITEM_INTRINSIC_FALLBACK_PX}px);
+}
 `;
-    document.head.append(style);
+        document.head.append(style);
+    }
+
+    const popup = document.querySelector(CHAT_MANAGEMENT_POPUP_SELECTOR);
+    if (popup) {
+        observeChatBackupListIntrinsicHeight(popup);
+    }
+}
+
+function observeChatBackupListIntrinsicHeight(popup) {
+    if (!(popup instanceof Element)) {
+        return false;
+    }
+
+    const list = popup.querySelector(CHAT_BACKUP_LIST_SELECTOR);
+    if (list instanceof HTMLElement) {
+        extensionState.chatBackupListAttachObserver?.disconnect();
+        extensionState.chatBackupListAttachObserver = null;
+
+        if (extensionState.chatBackupListObserverTarget !== list) {
+            extensionState.chatBackupListMutationObserver?.disconnect();
+            extensionState.chatBackupListResizeObserver?.disconnect();
+
+            extensionState.chatBackupListObserverTarget = list;
+            extensionState.chatBackupListMutationObserver = new MutationObserver(() => {
+                scheduleChatBackupItemIntrinsicHeightMeasurement(popup);
+            });
+            extensionState.chatBackupListMutationObserver.observe(list, {
+                childList: true,
+            });
+
+            extensionState.chatBackupListResizeObserver = typeof ResizeObserver === 'function'
+                ? new ResizeObserver(() => {
+                    scheduleChatBackupItemIntrinsicHeightMeasurement(popup);
+                })
+                : null;
+            extensionState.chatBackupListResizeObserver?.observe(list);
+        }
+
+        scheduleChatBackupItemIntrinsicHeightMeasurement(popup);
+        return true;
+    }
+
+    if (extensionState.chatBackupListAttachObserver) {
+        return false;
+    }
+
+    const attachObserver = new MutationObserver(() => {
+        if (observeChatBackupListIntrinsicHeight(popup)) {
+            attachObserver.disconnect();
+            if (extensionState.chatBackupListAttachObserver === attachObserver) {
+                extensionState.chatBackupListAttachObserver = null;
+            }
+        }
+    });
+    attachObserver.observe(popup, {
+        childList: true,
+        subtree: true,
+    });
+    extensionState.chatBackupListAttachObserver = attachObserver;
+    return false;
+}
+
+function scheduleChatBackupItemIntrinsicHeightMeasurement(popup) {
+    if (!settings.chatListScrollOptimizationEnabled || !(popup instanceof Element)) {
+        return;
+    }
+
+    if (extensionState.chatBackupItemMeasureFrame !== undefined
+        && extensionState.chatBackupItemMeasureFrame !== null) {
+        return;
+    }
+
+    extensionState.chatBackupItemMeasureFrame = requestAnimationFrame(() => {
+        extensionState.chatBackupItemMeasureFrame = null;
+        measureChatBackupItemIntrinsicHeight(popup);
+    });
+}
+
+function measureChatBackupItemIntrinsicHeight(popup) {
+    const list = popup.querySelector(CHAT_BACKUP_LIST_SELECTOR);
+    if (!(list instanceof HTMLElement)) {
+        return;
+    }
+
+    if (!list.classList.contains('open')) {
+        return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const item = list.firstElementChild;
+
+    if (!(item instanceof HTMLElement) || !item.matches(CHAT_BACKUP_ITEM_SELECTOR)) {
+        return;
+    }
+
+    const itemRect = item.getBoundingClientRect();
+    if (itemRect.height <= 0 || itemRect.bottom <= listRect.top || itemRect.top >= listRect.bottom) {
+        return;
+    }
+
+    const measuredHeight = Math.ceil(itemRect.height);
+    if (!Number.isFinite(measuredHeight) || measuredHeight <= 0) {
+        return;
+    }
+
+    const previousHeight = Number(list.dataset.baiBaiToolkitBackupItemHeight || 0);
+    if (previousHeight === measuredHeight) {
+        return;
+    }
+
+    list.dataset.baiBaiToolkitBackupItemHeight = String(measuredHeight);
+    list.style.setProperty(CHAT_BACKUP_ITEM_INTRINSIC_SIZE_VAR, `${measuredHeight}px`);
+}
+
+function clearChatBackupItemIntrinsicHeightMeasurement() {
+    if (extensionState.chatBackupItemMeasureFrame !== undefined
+        && extensionState.chatBackupItemMeasureFrame !== null) {
+        cancelAnimationFrame(extensionState.chatBackupItemMeasureFrame);
+    }
+
+    extensionState.chatBackupItemMeasureFrame = null;
+    extensionState.chatBackupListAttachObserver?.disconnect();
+    extensionState.chatBackupListAttachObserver = null;
+    extensionState.chatBackupListMutationObserver?.disconnect();
+    extensionState.chatBackupListMutationObserver = null;
+    extensionState.chatBackupListResizeObserver?.disconnect();
+    extensionState.chatBackupListResizeObserver = null;
+    extensionState.chatBackupListObserverTarget = null;
 }
 
 function observeChatManagementPopupCleanup() {
     if (extensionState.chatManagementPopupObserver) {
-        return;
-    }
-
-    const attachObserver = () => {
-        const popup = document.querySelector(CHAT_MANAGEMENT_POPUP_SELECTOR);
-
-        if (!popup) {
-            return false;
-        }
-
-        let wasVisible = isElementDisplayed(popup);
-        const observer = new MutationObserver(() => {
-            const isVisible = isElementDisplayed(popup);
-
-            if (wasVisible && !isVisible) {
-                clearChatManagementPopupContent(popup);
-            }
-
-            wasVisible = isVisible;
-        });
-
-        observer.observe(popup, {
-            attributes: true,
-            attributeFilter: ['style', 'class'],
-        });
-
-        extensionState.chatManagementPopupObserver = observer;
         return true;
-    };
-
-    if (attachObserver()) {
-        return;
     }
 
-    const bodyObserver = new MutationObserver(() => {
-        if (attachObserver()) {
-            bodyObserver.disconnect();
-            extensionState.chatManagementPopupAttachObserver = null;
+    const popup = document.querySelector(CHAT_MANAGEMENT_POPUP_SELECTOR);
+    if (!popup) {
+        return false;
+    }
+
+    let wasVisible = isElementDisplayed(popup);
+    const observer = new MutationObserver(() => {
+        const isVisible = isElementDisplayed(popup);
+
+        if (wasVisible && !isVisible) {
+            clearChatManagementPopupContent(popup);
         }
+
+        if (!wasVisible && isVisible) {
+            scheduleChatBackupItemIntrinsicHeightMeasurement(popup);
+        }
+        wasVisible = isVisible;
     });
 
-    bodyObserver.observe(document.body, {
-        childList: true,
-        subtree: true,
+    observer.observe(popup, {
+        attributes: true,
+        attributeFilter: ['style', 'class'],
     });
 
-    extensionState.chatManagementPopupAttachObserver = bodyObserver;
+    observeChatBackupListIntrinsicHeight(popup);
+    extensionState.chatManagementPopupObserver = observer;
+    return true;
 }
 
 function isElementDisplayed(element) {
@@ -4203,6 +4325,63 @@ function patchFastChatSearchFetch() {
     baiBaiToolkitFetch[FAST_CHAT_SEARCH_FETCH_KEY] = true;
     baiBaiToolkitFetch.__baiBaiToolkitOriginalFetch = originalFetch;
     globalThis.fetch = baiBaiToolkitFetch;
+}
+
+function patchFastChatBackupsFetch() {
+    const originalFetch = globalThis.fetch;
+
+    if (typeof originalFetch !== 'function' || originalFetch[FAST_CHAT_BACKUPS_FETCH_KEY]) {
+        return;
+    }
+
+    async function baiBaiToolkitChatBackupsFetch(input, init) {
+        if (isChatBackupsListRequest(input, init)) {
+            observeChatManagementPopupCleanup();
+            try {
+                return await fetchFastChatBackupsList(originalFetch, input, init);
+            } catch (error) {
+                if (error?.name === 'AbortError') {
+                    throw error;
+                }
+                console.debug(`${LOG_PREFIX} Fast chat backup list failed; falling back to native endpoint`, error);
+            }
+        }
+
+        return originalFetch.apply(this, arguments);
+    }
+
+    baiBaiToolkitChatBackupsFetch[FAST_CHAT_BACKUPS_FETCH_KEY] = true;
+    baiBaiToolkitChatBackupsFetch.__baiBaiToolkitOriginalFetch = originalFetch;
+    globalThis.fetch = baiBaiToolkitChatBackupsFetch;
+}
+
+function isChatBackupsListRequest(input, init) {
+    try {
+        const rawUrl = input instanceof Request ? input.url : String(input);
+        const url = new URL(rawUrl, location.origin);
+        const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+        return method === 'POST'
+            && url.origin === location.origin
+            && url.pathname === NATIVE_CHAT_BACKUPS_LIST_URL;
+    } catch {
+        return false;
+    }
+}
+
+async function fetchFastChatBackupsList(fetchFn, input, init) {
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const response = await fetchFn(BAIBAOKU_FAST_CHAT_BACKUPS_LIST_URL, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({}),
+        signal,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Unexpected status ${response.status}`);
+    }
+
+    return response;
 }
 
 async function getFastChatSearchRequestData(input, init) {
@@ -5867,5 +6046,6 @@ export {
     isChatDeleteEditFlowSupported,
     isWelcomeRecentChatDirectOpenCompatibilityMode,
     observeChatManagementPopupCleanup,
+    patchFastChatBackupsFetch,
     patchFastChatSearchFetch,
 };
