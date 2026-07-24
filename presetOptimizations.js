@@ -3977,9 +3977,9 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     white-space: nowrap;
 }
 
-#completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_list_head,
+/* 宿主为拖拽柄、名称、操作区和 Token 保留了四个显式 grid-column。 */
 #completion_prompt_manager ${PRESET_PROMPT_MANAGER_LIST_SELECTOR} li.completion_prompt_manager_prompt {
-    grid-template-columns: minmax(0, 1fr) max-content max-content !important;
+    grid-template-columns: var(--completion-prompt-manager-handle-column, 28px) minmax(0, 1fr) max-content max-content !important;
     column-gap: 6px !important;
 }
 
@@ -4280,12 +4280,18 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
     position: relative;
 }
 
+/* 全局库标记已绝对定位，剩余三个在流子节点必须覆盖宿主的第 2～4 列定位。 */
 #completion_prompt_manager .bai-bai-preset-global-library-outside li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
+    grid-column: 1 !important;
     min-width: 0 !important;
     white-space: normal !important;
     overflow: visible !important;
     overflow-wrap: anywhere !important;
     word-break: break-word !important;
+}
+
+#completion_prompt_manager .bai-bai-preset-global-library-outside li.completion_prompt_manager_prompt > span:nth-of-type(3) {
+    grid-column: 2 !important;
 }
 
 #completion_prompt_manager .bai-bai-preset-global-library-outside li.completion_prompt_manager_prompt .prompt_manager_prompt_controls {
@@ -4297,6 +4303,7 @@ ${PRESET_PROMPT_MANAGER_LIST_SELECTOR}.${PRESET_DRAG_ACTIVE_CLASS} li.completion
 }
 
 #completion_prompt_manager .bai-bai-preset-global-library-outside li.completion_prompt_manager_prompt .prompt_manager_prompt_tokens {
+    grid-column: 3 !important;
     inline-size: max-content !important;
     min-inline-size: 2.2em !important;
     width: auto !important;
@@ -4660,7 +4667,7 @@ body.${PRESET_VUE_DRAGGING_BODY_CLASS} #completion_prompt_manager ${PRESET_PROMP
 .bai-bai-preset-vue-sortable-fallback.completion_prompt_manager_prompt,
 .bai-bai-preset-vue-sortable-drag.completion_prompt_manager_prompt {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) max-content max-content !important;
+    grid-template-columns: 0 minmax(0, 1fr) max-content max-content !important;
     column-gap: 6px !important;
     align-items: center !important;
     padding-left: 20px !important;
