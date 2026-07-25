@@ -3913,6 +3913,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
 
 @media (max-width: 600px) {
     #wiTopBlock,
+    #wiTopBlock > .range-block,
     #WIMultiSelector,
     #WIMultiSelector .range-block-range {
         box-sizing: border-box;
