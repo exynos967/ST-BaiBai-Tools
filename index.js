@@ -23,7 +23,7 @@ import { sendMessageAs } from '../../../slash-commands.js';
 import { isAdmin } from '../../../user.js';
 import { debounce, download, getCharaFilename, getFileText, regexFromString, resetScrollHeight, setInfoBlock, uuidv4 } from '../../../utils.js';
 import { getCurrentPresetAPI as getRegexCurrentPresetAPI, getCurrentPresetName as getRegexCurrentPresetName, getScriptsByType as getRegexScriptsByType, runRegexScript, SCRIPT_TYPES as REGEX_SCRIPT_TYPES, substitute_find_regex } from '../../regex/engine.js';
-const CURRENT_VERSION = '0.29.1';
+const CURRENT_VERSION = '0.29.3';
 const LOCAL_ASSET_VERSION = getLocalAssetVersion(CURRENT_VERSION);
 const { SaveGenerateDisplay } = await importVersionedLocalModule('./saveGenerateDisplay.js');
 const chatOptimizations = await importVersionedLocalModule('./chatOptimizations.js');
@@ -155,6 +155,7 @@ const REGEX_PENDING_CHANGES_LIFECYCLE_HANDLER_KEY = '__baiBaiToolkitRegexPending
 const REGEX_VUE_MANAGER_CLICK_HANDLER_KEY = '__baiBaiToolkitRegexVueManagerClickHandler';
 const REGEX_VUE_SCOPED_CONTEXT_HANDLER_KEY = '__baiBaiToolkitRegexVueScopedContextHandler';
 const REGEX_VUE_PRESET_RENAME_HANDLER_KEY = '__baiBaiToolkitRegexVuePresetRenameHandler';
+const REGEX_PRESET_GROUP_PORTABILITY_HANDLER_KEY = '__baiBaiToolkitRegexPresetGroupPortabilityHandler';
 const REGEX_VUE_NATIVE_RENDER_GUARD_KEY = '__baiBaiToolkitRegexVueNativeRenderGuard';
 const REGEX_VUE_MANAGER_ROOT_ID = 'bai_bai_toolkit_regex_vue_manager_root';
 const REGEX_VUE_MANAGER_STYLE_ID = 'bai_bai_toolkit_regex_vue_manager_style';
@@ -164,6 +165,8 @@ const CHARACTER_LIST_AVATAR_LAZY_LOAD_KEY = '__baiBaiToolkitCharacterListAvatarL
 const CHARACTER_LIST_AVATAR_LAZY_LOAD_STYLE_ID = 'bai_bai_toolkit_character_list_avatar_lazy_load_style';
 const REGEX_UNGROUPED_GROUP_ID = '__ungrouped';
 const REGEX_PENDING_ASSIGNMENT_GROUP_ID = '__pending_assignment';
+const REGEX_PRESET_GROUP_EXTENSION_PATH = 'baibaiToolkit.regexGroups';
+const REGEX_PRESET_GROUP_EXTENSION_VERSION = 1;
 const REGEX_VUE_DROP_TARGET_CLASS = 'bai-bai-regex-drop-target';
 const REGEX_VUE_DRAG_INDICATOR_CLASS = 'bai-bai-regex-drag-indicator';
 const REGEX_VUE_DRAGGING_BODY_CLASS = 'bai-bai-regex-vue-dragging';
@@ -5597,6 +5600,7 @@ function installRegexQuickOperationOptimization() {
     installRegexVueManagerActionHandler();
     installRegexVueScopedContextHandler();
     installRegexVuePresetRenameHandler();
+    installRegexPresetGroupPortabilityHandlers();
     scheduleNativeRegexSortableGuard();
     void installRegexVueManager();
 }
@@ -5627,6 +5631,7 @@ function removeRegexQuickOperationOptimization() {
     removeRegexVueNativeRenderGuard();
     removeRegexVueScopedContextHandler();
     removeRegexVuePresetRenameHandler();
+    removeRegexPresetGroupPortabilityHandlers();
     removeOptimizedRegexImportHandler();
     removeRegexVueManagerActionHandler();
     removeRegexVueManager();
@@ -5751,7 +5756,7 @@ function installRegexVueScopedContextHandler() {
         syncRegexVueScopedListFromContext();
     };
     const presetHandler = () => {
-        syncRegexVuePresetListFromContext();
+        syncRegexVuePresetListFromContext({ forcePortableHydration: true });
     };
 
     extensionState[REGEX_VUE_SCOPED_CONTEXT_HANDLER_KEY] = { handler, presetHandler };
@@ -5860,33 +5865,42 @@ function migrateRegexPresetAllowedAfterRename(apiId, oldName, newName) {
 
 function migratePendingRegexPresetSavesAfterRename(apiId, oldName, newName) {
     const state = getRegexQuickOperationState();
-
-    if (!(state.pendingRegexScriptSaves instanceof Map)) {
-        return false;
-    }
-
     const oldKey = getRegexPresetGroupScopeKey(apiId, oldName);
     const newKey = getRegexPresetGroupScopeKey(apiId, newName);
     let changed = false;
 
-    for (const [key, entry] of Array.from(state.pendingRegexScriptSaves.entries())) {
-        if (entry?.scriptType !== REGEX_SCRIPT_TYPES.PRESET || entry.apiId !== apiId || entry.presetName !== oldName) {
-            continue;
+    if (state.pendingRegexScriptSaves instanceof Map) {
+        for (const [key, entry] of Array.from(state.pendingRegexScriptSaves.entries())) {
+            if (entry?.scriptType !== REGEX_SCRIPT_TYPES.PRESET || entry.apiId !== apiId || entry.presetName !== oldName) {
+                continue;
+            }
+
+            state.pendingRegexScriptSaves.delete(key);
+            state.pendingRegexScriptSaves.set(newKey, {
+                ...entry,
+                presetName: newName,
+                scopeKey: newKey,
+            });
+            changed = true;
         }
 
-        state.pendingRegexScriptSaves.delete(key);
-        state.pendingRegexScriptSaves.set(newKey, {
-            ...entry,
-            presetName: newName,
-            scopeKey: newKey,
-        });
-        changed = true;
+        if (!changed && state.pendingRegexScriptSaves.has(oldKey)) {
+            const entry = state.pendingRegexScriptSaves.get(oldKey);
+            state.pendingRegexScriptSaves.delete(oldKey);
+            state.pendingRegexScriptSaves.set(newKey, {
+                ...entry,
+                apiId,
+                presetName: newName,
+                scopeKey: newKey,
+            });
+            changed = true;
+        }
     }
 
-    if (!changed && state.pendingRegexScriptSaves.has(oldKey)) {
-        const entry = state.pendingRegexScriptSaves.get(oldKey);
-        state.pendingRegexScriptSaves.delete(oldKey);
-        state.pendingRegexScriptSaves.set(newKey, {
+    if (state.pendingRegexPresetGroupSaves instanceof Map && state.pendingRegexPresetGroupSaves.has(oldKey)) {
+        const entry = state.pendingRegexPresetGroupSaves.get(oldKey);
+        state.pendingRegexPresetGroupSaves.delete(oldKey);
+        state.pendingRegexPresetGroupSaves.set(newKey, {
             ...entry,
             apiId,
             presetName: newName,
@@ -5895,7 +5909,85 @@ function migratePendingRegexPresetSavesAfterRename(apiId, oldName, newName) {
         changed = true;
     }
 
+    if (state.regexPresetGroupHydratedScopeKey === oldKey) {
+        state.regexPresetGroupHydratedScopeKey = newKey;
+    }
+
     return changed;
+}
+
+function installRegexPresetGroupPortabilityHandlers() {
+    if (extensionState[REGEX_PRESET_GROUP_PORTABILITY_HANDLER_KEY]) {
+        return;
+    }
+
+    const exportHandler = async preset => {
+        try {
+            await flushPendingRegexChanges();
+        } catch (error) {
+            console.debug(`${LOG_PREFIX} Failed to flush regex groups before preset export`, error);
+        }
+
+        injectRegexPresetGroupStateIntoExport(preset, 'openai');
+    };
+    const importHandler = event => {
+        importRegexPresetGroupStateFromPresetData(event?.data, 'openai', event?.presetName);
+    };
+    const genericExportClickHandler = event => {
+        const button = event.target instanceof Element
+            ? event.target.closest('[data-preset-manager-export]')
+            : null;
+
+        if (!(button instanceof HTMLElement)) {
+            return;
+        }
+
+        const state = getRegexQuickOperationState();
+
+        if (state.regexPresetExportBypassButton === button) {
+            state.regexPresetExportBypassButton = null;
+            return;
+        }
+
+        if (!hasPendingRegexChanges() && !state.regexChangesSavePromise) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void (async () => {
+            try {
+                await flushPendingRegexChanges();
+                state.regexPresetExportBypassButton = button;
+                button.click();
+            } catch (error) {
+                console.debug(`${LOG_PREFIX} Failed to save regex groups before preset export`, error);
+                toastr.error(t`Failed to save regex groups before exporting the preset.`);
+            }
+        })();
+    };
+
+    extensionState[REGEX_PRESET_GROUP_PORTABILITY_HANDLER_KEY] = {
+        exportHandler,
+        importHandler,
+        genericExportClickHandler,
+    };
+    eventSource.on(event_types.OAI_PRESET_EXPORT_READY, exportHandler);
+    eventSource.on(event_types.OAI_PRESET_IMPORT_READY, importHandler);
+    document.addEventListener('click', genericExportClickHandler, true);
+}
+
+function removeRegexPresetGroupPortabilityHandlers() {
+    const entry = extensionState[REGEX_PRESET_GROUP_PORTABILITY_HANDLER_KEY];
+
+    if (!entry) {
+        return;
+    }
+
+    eventSource.removeListener(event_types.OAI_PRESET_EXPORT_READY, entry.exportHandler);
+    eventSource.removeListener(event_types.OAI_PRESET_IMPORT_READY, entry.importHandler);
+    document.removeEventListener('click', entry.genericExportClickHandler, true);
+    delete extensionState[REGEX_PRESET_GROUP_PORTABILITY_HANDLER_KEY];
 }
 
 function installRegexVueNativeRenderGuard() {
@@ -6336,13 +6428,14 @@ function syncRegexVueScopedListFromContext() {
     updateRegexBulkControls();
 }
 
-function syncRegexVuePresetListFromContext() {
+function syncRegexVuePresetListFromContext({ forcePortableHydration = false } = {}) {
     const manager = getRegexVueManagerState();
 
     if (!manager.state) {
         return;
     }
 
+    hydrateCurrentRegexPresetGroupStateFromExtension({ force: forcePortableHydration });
     manager.state.lists.preset = buildRegexVueListModel(REGEX_SCRIPT_TYPES.PRESET);
     pruneRegexVueSelection();
     updateRegexBulkControls();
@@ -6357,6 +6450,9 @@ async function syncRegexVueManagerAfterDataChange() {
 function buildRegexVueListModel(scriptType) {
     const typeKey = getRegexScriptTypeKey(scriptType);
     const scripts = getRegexScriptsByType(scriptType);
+    if (scriptType === REGEX_SCRIPT_TYPES.PRESET) {
+        hydrateCurrentRegexPresetGroupStateFromExtension();
+    }
     const groupState = getRegexGroupStateForScriptType(scriptType);
     normalizeRegexGroupState(groupState);
     if (syncRegexGroupScriptOrderMetaFromScriptArray(groupState, scripts)) {
@@ -7988,6 +8084,273 @@ function normalizeRegexGroupState(groupState) {
     groupState.ungrouped = {
         name: getRegexUngroupedGroupDisplayName(groupState.ungrouped.name),
         collapsed: Boolean(groupState.ungrouped.collapsed),
+    };
+}
+
+function normalizeRegexPresetGroupExtensionState(value, scripts) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+
+    if (Number(value.version) !== REGEX_PRESET_GROUP_EXTENSION_VERSION) {
+        return null;
+    }
+
+    const seenGroupIds = new Set();
+    const groups = (Array.isArray(value.groups) ? value.groups : [])
+        .filter(group => group && typeof group === 'object' && group.id)
+        .map((group, index) => ({
+            id: String(group.id),
+            name: String(group.name || t`Unnamed group`),
+            order: Number.isFinite(Number(group.order)) ? Number(group.order) : index,
+            collapsed: Boolean(group.collapsed),
+        }))
+        .filter(group => {
+            if (
+                group.id === REGEX_UNGROUPED_GROUP_ID
+                || group.id === REGEX_PENDING_ASSIGNMENT_GROUP_ID
+                || seenGroupIds.has(group.id)
+            ) {
+                return false;
+            }
+
+            seenGroupIds.add(group.id);
+            return true;
+        })
+        .sort((left, right) => left.order - right.order)
+        .map((group, index) => ({ ...group, order: index }));
+    const validGroupIds = new Set(groups.map(group => group.id));
+    const sourceScripts = value.scripts && typeof value.scripts === 'object' && !Array.isArray(value.scripts)
+        ? value.scripts
+        : {};
+    const buckets = new Map([
+        ...groups.map(group => [group.id, []]),
+        [REGEX_UNGROUPED_GROUP_ID, []],
+    ]);
+
+    for (let index = 0; index < (Array.isArray(scripts) ? scripts.length : 0); index++) {
+        const scriptId = scripts[index]?.id;
+
+        if (!scriptId) {
+            continue;
+        }
+
+        const sourceMeta = sourceScripts[scriptId];
+        const groupId = validGroupIds.has(sourceMeta?.groupId)
+            ? sourceMeta.groupId
+            : REGEX_UNGROUPED_GROUP_ID;
+        const order = Number.isFinite(Number(sourceMeta?.order)) ? Number(sourceMeta.order) : index;
+        buckets.get(groupId).push({ scriptId, order, index });
+    }
+
+    const normalizedScripts = {};
+
+    for (const [groupId, entries] of buckets) {
+        entries
+            .sort((left, right) => left.order - right.order || left.index - right.index)
+            .forEach((entry, order) => {
+                normalizedScripts[entry.scriptId] = { groupId, order };
+            });
+    }
+
+    return {
+        groups,
+        scripts: normalizedScripts,
+        ungrouped: {
+            name: getRegexUngroupedGroupDisplayName(value.ungrouped?.name),
+            collapsed: Boolean(value.ungrouped?.collapsed),
+        },
+    };
+}
+
+function createRegexPresetGroupExtensionPayload(groupState, scripts) {
+    const normalized = normalizeRegexPresetGroupExtensionState({
+        version: REGEX_PRESET_GROUP_EXTENSION_VERSION,
+        groups: Array.isArray(groupState?.groups) ? structuredClone(groupState.groups) : [],
+        scripts: groupState?.scripts && typeof groupState.scripts === 'object'
+            ? structuredClone(groupState.scripts)
+            : {},
+        ungrouped: groupState?.ungrouped && typeof groupState.ungrouped === 'object'
+            ? structuredClone(groupState.ungrouped)
+            : {},
+    }, scripts);
+
+    if (!normalized) {
+        return null;
+    }
+
+    return {
+        version: REGEX_PRESET_GROUP_EXTENSION_VERSION,
+        ...normalized,
+    };
+}
+
+function getRegexPresetGroupExtensionValue(presetData) {
+    return presetData?.extensions?.baibaiToolkit?.regexGroups;
+}
+
+function setRegexPresetGroupExtensionValue(presetData, value) {
+    if (!presetData || typeof presetData !== 'object' || !value) {
+        return false;
+    }
+
+    presetData.extensions = presetData.extensions && typeof presetData.extensions === 'object'
+        ? presetData.extensions
+        : {};
+    presetData.extensions.baibaiToolkit = presetData.extensions.baibaiToolkit
+        && typeof presetData.extensions.baibaiToolkit === 'object'
+        ? presetData.extensions.baibaiToolkit
+        : {};
+    presetData.extensions.baibaiToolkit.regexGroups = value;
+    return true;
+}
+
+function hydrateCurrentRegexPresetGroupStateFromExtension({ force = false } = {}) {
+    const apiId = getRegexCurrentPresetAPI();
+    const presetName = getRegexCurrentPresetName();
+
+    if (!apiId || !presetName) {
+        return false;
+    }
+
+    const quickState = getRegexQuickOperationState();
+    const scopeKey = getRegexPresetGroupScopeKey(apiId, presetName);
+
+    if (!force && quickState.regexPresetGroupHydratedScopeKey === scopeKey) {
+        return false;
+    }
+
+    quickState.regexPresetGroupHydratedScopeKey = scopeKey;
+    const presetManager = getPresetManager(apiId);
+    const scripts = getRegexScriptsByType(REGEX_SCRIPT_TYPES.PRESET);
+    const portableValue = presetManager?.readPresetExtensionField({
+        name: presetName,
+        path: REGEX_PRESET_GROUP_EXTENSION_PATH,
+    });
+    const root = getRegexGroupSettingsRoot();
+    const cachedState = root.scopes[scopeKey];
+
+    if (portableValue !== null && portableValue !== undefined) {
+        const normalized = normalizeRegexPresetGroupExtensionState(portableValue, scripts);
+
+        if (!normalized) {
+            console.warn(`${LOG_PREFIX} Ignored invalid portable regex group data for preset "${presetName}"`);
+            return false;
+        }
+
+        const changed = JSON.stringify(cachedState ?? null) !== JSON.stringify(normalized);
+        root.scopes[scopeKey] = normalized;
+
+        if (changed) {
+            markRegexGroupSettingsSavePending({ captureCurrentPreset: false });
+        }
+
+        return changed;
+    }
+
+    if (!cachedState || typeof cachedState !== 'object') {
+        return false;
+    }
+
+    const migratedState = normalizeRegexPresetGroupExtensionState({
+        version: REGEX_PRESET_GROUP_EXTENSION_VERSION,
+        ...cachedState,
+    }, scripts);
+
+    if (!migratedState) {
+        return false;
+    }
+
+    root.scopes[scopeKey] = migratedState;
+    markRegexGroupSettingsSavePending();
+    return true;
+}
+
+function injectRegexPresetGroupStateIntoExport(presetData, apiId) {
+    const presetManager = getPresetManager(apiId);
+    const presetName = presetManager?.getSelectedPresetName();
+
+    if (!presetName || !presetData || typeof presetData !== 'object') {
+        return false;
+    }
+
+    const scopeKey = getRegexPresetGroupScopeKey(apiId, presetName);
+    const groupState = getRegexGroupSettingsRoot().scopes[scopeKey];
+
+    if (!groupState || typeof groupState !== 'object') {
+        return false;
+    }
+
+    const scripts = Array.isArray(presetData.extensions?.regex_scripts)
+        ? presetData.extensions.regex_scripts
+        : [];
+    const payload = createRegexPresetGroupExtensionPayload(groupState, scripts);
+    return setRegexPresetGroupExtensionValue(presetData, payload);
+}
+
+function importRegexPresetGroupStateFromPresetData(presetData, apiId, presetName) {
+    if (!apiId || !presetName || !presetData || typeof presetData !== 'object') {
+        return false;
+    }
+
+    const portableValue = getRegexPresetGroupExtensionValue(presetData);
+
+    if (portableValue === undefined) {
+        return false;
+    }
+
+    const scripts = Array.isArray(presetData.extensions?.regex_scripts)
+        ? presetData.extensions.regex_scripts
+        : [];
+    const normalized = normalizeRegexPresetGroupExtensionState(portableValue, scripts);
+
+    if (!normalized) {
+        console.warn(`${LOG_PREFIX} Ignored invalid imported regex group data for preset "${presetName}"`);
+        return false;
+    }
+
+    const scopeKey = getRegexPresetGroupScopeKey(apiId, presetName);
+    const root = getRegexGroupSettingsRoot();
+    root.scopes[scopeKey] = normalized;
+
+    const quickState = getRegexQuickOperationState();
+    if (getRegexCurrentPresetAPI() === apiId && getRegexCurrentPresetName() === presetName) {
+        quickState.regexPresetGroupHydratedScopeKey = scopeKey;
+    }
+
+    markRegexGroupSettingsSavePending({ captureCurrentPreset: false });
+    return true;
+}
+
+function createPendingCurrentRegexPresetGroupSaveEntry() {
+    const apiId = getRegexCurrentPresetAPI();
+    const presetName = getRegexCurrentPresetName();
+
+    if (!apiId || !presetName) {
+        return null;
+    }
+
+    const scopeKey = getRegexPresetGroupScopeKey(apiId, presetName);
+    const groupState = getRegexGroupSettingsRoot().scopes[scopeKey];
+
+    if (!groupState || typeof groupState !== 'object') {
+        return null;
+    }
+
+    const value = createRegexPresetGroupExtensionPayload(
+        groupState,
+        getRegexScriptsByType(REGEX_SCRIPT_TYPES.PRESET),
+    );
+
+    if (!value) {
+        return null;
+    }
+
+    return {
+        apiId,
+        presetName,
+        scopeKey,
+        value,
     };
 }
 
@@ -10166,10 +10529,23 @@ function createPendingRegexScriptSaveEntry(scriptType, scripts) {
     }
 }
 
-function markRegexGroupSettingsSavePending() {
+function markRegexGroupSettingsSavePending({ captureCurrentPreset = true } = {}) {
     const state = getRegexQuickOperationState();
     extension_settings[SETTINGS_KEY].regexListGroups = settings.regexListGroups;
     state.pendingRegexGroupSettingsSave = true;
+
+    if (captureCurrentPreset) {
+        const entry = createPendingCurrentRegexPresetGroupSaveEntry();
+
+        if (entry) {
+            if (!(state.pendingRegexPresetGroupSaves instanceof Map)) {
+                state.pendingRegexPresetGroupSaves = new Map();
+            }
+
+            state.pendingRegexPresetGroupSaves.set(entry.scopeKey, entry);
+        }
+    }
+
     schedulePendingRegexChangesFlushCheck();
 }
 
@@ -10344,7 +10720,11 @@ async function flushPendingRegexChatReload() {
 
 function hasPendingRegexChanges() {
     const state = getRegexQuickOperationState();
-    return Boolean(state.pendingRegexGroupSettingsSave || state.pendingRegexScriptSaves?.size > 0);
+    return Boolean(
+        state.pendingRegexGroupSettingsSave
+        || state.pendingRegexScriptSaves?.size > 0
+        || state.pendingRegexPresetGroupSaves?.size > 0
+    );
 }
 
 async function flushPendingRegexChanges() {
@@ -10357,9 +10737,12 @@ async function flushPendingRegexChanges() {
     const pendingScriptSaves = state.pendingRegexScriptSaves instanceof Map
         ? Array.from(state.pendingRegexScriptSaves.values())
         : [];
+    const pendingPresetGroupSaves = state.pendingRegexPresetGroupSaves instanceof Map
+        ? Array.from(state.pendingRegexPresetGroupSaves.values())
+        : [];
     const shouldSaveGroups = Boolean(state.pendingRegexGroupSettingsSave);
 
-    if (pendingScriptSaves.length === 0 && !shouldSaveGroups) {
+    if (pendingScriptSaves.length === 0 && pendingPresetGroupSaves.length === 0 && !shouldSaveGroups) {
         return;
     }
 
@@ -10368,10 +10751,15 @@ async function flushPendingRegexChanges() {
     const savePromise = (async () => {
         try {
             state.pendingRegexScriptSaves = new Map();
+            state.pendingRegexPresetGroupSaves = new Map();
             state.pendingRegexGroupSettingsSave = false;
 
             for (const entry of pendingScriptSaves) {
                 await flushPendingRegexScriptSave(entry);
+            }
+
+            for (const entry of pendingPresetGroupSaves) {
+                await flushPendingRegexPresetGroupSave(entry);
             }
 
             if (shouldSaveSettings) {
@@ -10385,6 +10773,14 @@ async function flushPendingRegexChanges() {
 
             for (const entry of pendingScriptSaves) {
                 state.pendingRegexScriptSaves.set(entry.scopeKey, entry);
+            }
+
+            if (!(state.pendingRegexPresetGroupSaves instanceof Map)) {
+                state.pendingRegexPresetGroupSaves = new Map();
+            }
+
+            for (const entry of pendingPresetGroupSaves) {
+                state.pendingRegexPresetGroupSaves.set(entry.scopeKey, entry);
             }
 
             state.pendingRegexGroupSettingsSave = state.pendingRegexGroupSettingsSave || shouldSaveGroups;
@@ -10435,6 +10831,20 @@ async function flushPendingRegexScriptSave(entry) {
         default:
             break;
     }
+}
+
+async function flushPendingRegexPresetGroupSave(entry) {
+    const presetManager = getPresetManager(entry.apiId);
+
+    if (!presetManager) {
+        throw new Error(`Preset manager not found for API: ${entry.apiId}`);
+    }
+
+    await presetManager.writePresetExtensionField({
+        name: entry.presetName,
+        path: REGEX_PRESET_GROUP_EXTENSION_PATH,
+        value: entry.value,
+    });
 }
 
 function removeRegexChatReloadVisibilityWatch() {
