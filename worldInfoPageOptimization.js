@@ -4004,7 +4004,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         display: none !important;
     }
 
-    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > #world_editor_select,
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > #world_editor_select:not(.select2-hidden-accessible),
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container {
         flex: 0 0 100%;
         max-width: 100%;
