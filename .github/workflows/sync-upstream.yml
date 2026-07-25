@@ -43,5 +43,26 @@ jobs:
             exit 0
           fi
 
-          git merge --no-edit "upstream/${UPSTREAM_BRANCH}"
+          if ! git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            mapfile -t conflicted_files < <(git diff --name-only --diff-filter=U)
+
+            if [[ ${#conflicted_files[@]} -ne 1 || ${conflicted_files[0]} != "manifest.json" ]]; then
+              printf 'Unresolved upstream conflicts:\n%s\n' "${conflicted_files[*]}" >&2
+              exit 1
+            fi
+
+            git checkout --theirs -- manifest.json
+            node <<'NODE'
+          const fs = require('fs');
+          const manifestPath = 'manifest.json';
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+          manifest.homePage = 'https://github.com/exynos967/ST-BaiBai-Tools/tree/TauriTavern-branch';
+          manifest.auto_update = true;
+          fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 4)}\n`);
+          NODE
+            git add manifest.json
+            git commit --no-edit
+          fi
+
           git push origin "HEAD:${TARGET_BRANCH}"
