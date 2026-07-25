@@ -6,6 +6,6 @@
     "js": "bootstrap.js",
     "author": "柏柏",
     "version": "0.29.1",
-    "homePage": "",
-    "auto_update": false
+    "homePage": "https://github.com/exynos967/ST-BaiBai-Tools/tree/TauriTavern-branch",
+    "auto_update": true
 }

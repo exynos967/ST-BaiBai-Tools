@@ -2765,7 +2765,7 @@ async function runSilentExtensionUpdate() {
     try {
         const localVersion = CURRENT_VERSION;
 
-        const remoteManifestUrl = `https://raw.githubusercontent.com/baibai-git/SillyTavern-Mobile-Resize-Guard/main/manifest.json?t=${Date.now()}`;
+        const remoteManifestUrl = `https://raw.githubusercontent.com/exynos967/ST-BaiBai-Tools/TauriTavern-branch/manifest.json?t=${Date.now()}`;
         const remoteManifestResponse = await fetch(remoteManifestUrl, { cache: 'no-store' });
         if (!remoteManifestResponse.ok) {
             throw new Error(`Failed to fetch remote manifest: ${remoteManifestResponse.statusText}`);
