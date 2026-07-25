@@ -3912,6 +3912,40 @@ function installWorldInfoMobileHeaderLayoutStyle() {
 }
 
 @media (max-width: 600px) {
+    #wiTopBlock,
+    #WIMultiSelector,
+    #WIMultiSelector .range-block-range {
+        box-sizing: border-box;
+        max-width: 100%;
+        min-width: 0;
+        width: 100%;
+    }
+
+    #WIMultiSelector {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    #WIMultiSelector > .range-block-title,
+    #WIMultiSelector > .range-block-range {
+        flex: 0 0 auto;
+    }
+
+    #WIMultiSelector .bai-bai-wi-global-selector-display {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    #WIMultiSelector .bai-bai-wi-global-selector-chip {
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+
+    #WIMultiSelector .bai-bai-wi-global-selector-chip-label {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
     .${WORLD_INFO_SEARCH_REPLACE_PANEL_CLASS} {
         margin: 0;
     }
@@ -3947,6 +3981,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     }
 
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header {
+        box-sizing: border-box;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
@@ -3954,6 +3989,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         justify-content: space-between;
         row-gap: 7px;
         margin-top: 20px;
+        max-width: 100%;
         overflow: hidden;
         width: 100%;
         min-width: 0;
@@ -3971,6 +4007,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > #world_editor_select,
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > .select2-container {
         flex: 0 0 100%;
+        max-width: 100%;
         width: 100% !important;
         min-width: 0;
     }
@@ -4068,10 +4105,40 @@ function installWorldInfoMobileHeaderLayoutStyle() {
 
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > #world_info_pagination {
         display: flex;
+        flex: 1 1 100%;
         flex-wrap: wrap;
         align-items: center;
         gap: 8px;
         line-height: 1;
+        max-width: 100%;
+        min-width: 0;
+        width: 100%;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] #world_info_pagination > .paginationjs {
+        box-sizing: border-box;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        max-width: 100%;
+        min-width: 0;
+        width: 100%;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] #world_info_pagination .paginationjs-nav {
+        box-sizing: border-box;
+        flex: 1 1 100%;
+        min-width: 0;
+        width: 100%;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] #world_info_pagination .paginationjs-pages {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    #world_popup[data-bai-bai-world-info-popup-layout="true"] #world_info_pagination .paginationjs-size-changer {
+        flex: 0 0 auto;
     }
 
     #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] > .world_entry_form > .inline-drawer > .inline-drawer-header {
@@ -4220,7 +4287,10 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     #world_popup_entries_list .bai-bai-wi-mobile-footer {
         display: flex;
         align-items: end;
+        flex-wrap: wrap;
         gap: 8px;
+        box-sizing: border-box;
+        max-width: 100%;
         width: 100%;
         margin-top: 10px;
     }
@@ -4244,6 +4314,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         box-sizing: border-box;
         padding: 2px 6px !important;
         font-size: 12px !important;
+        min-width: 0 !important;
         width: 66px !important;
         max-width: 66px !important;
     }
@@ -4429,6 +4500,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     }
 
     #world_popup[data-bai-bai-world-info-popup-layout="true"] {
+        box-sizing: border-box !important;
         display: block !important;
         flex-direction: initial !important;
         flex-wrap: initial !important;
@@ -4436,6 +4508,9 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         justify-content: initial !important;
         gap: initial !important;
         row-gap: initial !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        width: 100% !important;
     }
 
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header {
@@ -4526,6 +4601,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] .bai-bai-wi-mobile-number-group .world_entry_form_control,
     #world_popup_entries_list > .world_entry[data-bai-bai-world-info-mobile-header-layout="true"] .bai-bai-wi-mobile-number-group .probabilityContainer {
         min-height: 0 !important;
+        min-width: 0 !important;
         margin-right: 0 !important;
     }
 
