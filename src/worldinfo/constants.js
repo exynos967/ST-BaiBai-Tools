@@ -1,0 +1,65 @@
+
+const WORLD_INFO_PAGE_APPEND_PATCH_KEY = '__baiBaiToolkitWorldInfoPageAppendPatched';
+const WORLD_INFO_FLOATING_AUTOCOMPLETE_PATCH_KEY = '__baiBaiToolkitWorldInfoFloatingAutocompletePatched';
+const WORLD_INFO_DEFERRED_MACROS_DATASET_KEY = 'baiBaiToolkitWorldInfoDeferredMacros';
+const WORLD_INFO_DEFERRED_MACROS_VALUE_DATASET_KEY = 'baiBaiToolkitWorldInfoDeferredMacrosValue';
+const WORLD_INFO_CONTENT_TEXTAREA_SELECTOR = '.world_entry_edit textarea[name="content"][data-macros]';
+
+const WORLD_INFO_DRAWER_HANDLER_KEY = '__baiBaiToolkitWorldInfoDrawerHandler';
+const WORLD_INFO_DRAWER_ANIMATION_STYLE_ID = 'bai_bai_toolkit_world_info_drawer_animation_style';
+const WORLD_INFO_LAZY_SELECT2_PATCH_KEY = '__baiBaiToolkitWorldInfoLazySelect2Patched';
+const WORLD_INFO_CHARACTER_FILTER_APPEND_PATCH_KEY = '__baiBaiToolkitWorldInfoCharacterFilterAppendPatched';
+const WORLD_INFO_VUE_LIST_OPTIMIZATION_KEY = '__baiBaiToolkitWorldInfoVueListOptimization';
+const WORLD_INFO_MOBILE_HEADER_LAYOUT_STYLE_ID = 'bai_bai_toolkit_world_info_mobile_header_layout_style';
+const WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY = 'baiBaiToolkitWorldInfoEditorSelectGrouped';
+const WORLD_INFO_EDITOR_SELECT_SEARCH_DATASET_KEY = 'baiBaiToolkitWorldInfoEditorSelectSearch';
+const WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY = 'baiBaiToolkitWorldInfoEditorSelectSearchMobileSuppressed';
+const WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_RESTORE_MS = 450;
+const WORLD_INFO_EDITOR_SELECT_STYLE_KEY = '__baiBaiToolkitWorldInfoEditorSelectStyle';
+const WORLD_INFO_EDITOR_SELECT_DROPDOWN_CLASS = 'bai-bai-wi-editor-select-dropdown';
+const WORLD_INFO_GLOBAL_SELECTOR_STATE_KEY = '__baiBaiToolkitWorldInfoGlobalSelectorState';
+const WORLD_INFO_GLOBAL_SELECTOR_DATASET_KEY = 'baiBaiToolkitWorldInfoGlobalSelector';
+const WORLD_INFO_GLOBAL_SELECTOR_OPTION_ORDER_DATASET_KEY = 'baiBaiToolkitWorldInfoGlobalSelectorOrder';
+const WORLD_INFO_GLOBAL_SELECTOR_DROPDOWN_CLASS = 'bai-bai-wi-global-selector-dropdown';
+const WORLD_INFO_GLOBAL_SELECTOR_HOST_CLASS = 'bai-bai-wi-global-selector';
+const WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY = 'baiBaiToolkitWorldInfoGlobalSelectorSearchMobileSuppressed';
+const WORLD_INFO_GLOBAL_SELECTOR_TOUCH_SELECT_THRESHOLD_PX = 16;
+const WORLD_INFO_SEARCH_REPLACE_PANEL_CLASS = 'bai-bai-wi-search-replace-panel';
+const WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer > .inline-drawer-header .inline-drawer-toggle';
+const WORLD_INFO_ENTRY_DRAWER_SELECTOR = '#world_popup_entries_list > .world_entry > .world_entry_form > .inline-drawer';
+const WORLD_INFO_LAZY_SELECT2_SELECTOR = '#world_popup_entries_list .world_entry_edit select[name="characterFilter"], #world_popup_entries_list .world_entry_edit select[name="triggers"]';
+const WORLD_INFO_LAZY_SELECT2_DATASET_KEY = 'baiBaiToolkitLazySelect2';
+const WORLD_INFO_DEFERRED_OPTIONS_DATASET_KEY = 'baiBaiToolkitDeferredOptions';
+
+export {
+    WORLD_INFO_CHARACTER_FILTER_APPEND_PATCH_KEY,
+    WORLD_INFO_CONTENT_TEXTAREA_SELECTOR,
+    WORLD_INFO_DEFERRED_MACROS_DATASET_KEY,
+    WORLD_INFO_DEFERRED_MACROS_VALUE_DATASET_KEY,
+    WORLD_INFO_DEFERRED_OPTIONS_DATASET_KEY,
+    WORLD_INFO_DRAWER_ANIMATION_STYLE_ID,
+    WORLD_INFO_DRAWER_HANDLER_KEY,
+    WORLD_INFO_EDITOR_SELECT_DROPDOWN_CLASS,
+    WORLD_INFO_EDITOR_SELECT_GROUPING_DATASET_KEY,
+    WORLD_INFO_EDITOR_SELECT_SEARCH_DATASET_KEY,
+    WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_RESTORE_MS,
+    WORLD_INFO_EDITOR_SELECT_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY,
+    WORLD_INFO_EDITOR_SELECT_STYLE_KEY,
+    WORLD_INFO_ENTRY_DRAWER_SELECTOR,
+    WORLD_INFO_ENTRY_DRAWER_TOGGLE_SELECTOR,
+    WORLD_INFO_FLOATING_AUTOCOMPLETE_PATCH_KEY,
+    WORLD_INFO_GLOBAL_SELECTOR_DATASET_KEY,
+    WORLD_INFO_GLOBAL_SELECTOR_DROPDOWN_CLASS,
+    WORLD_INFO_GLOBAL_SELECTOR_HOST_CLASS,
+    WORLD_INFO_GLOBAL_SELECTOR_OPTION_ORDER_DATASET_KEY,
+    WORLD_INFO_GLOBAL_SELECTOR_SEARCH_MOBILE_SUPPRESSED_DATASET_KEY,
+    WORLD_INFO_GLOBAL_SELECTOR_STATE_KEY,
+    WORLD_INFO_GLOBAL_SELECTOR_TOUCH_SELECT_THRESHOLD_PX,
+    WORLD_INFO_LAZY_SELECT2_DATASET_KEY,
+    WORLD_INFO_LAZY_SELECT2_PATCH_KEY,
+    WORLD_INFO_LAZY_SELECT2_SELECTOR,
+    WORLD_INFO_MOBILE_HEADER_LAYOUT_STYLE_ID,
+    WORLD_INFO_PAGE_APPEND_PATCH_KEY,
+    WORLD_INFO_SEARCH_REPLACE_PANEL_CLASS,
+    WORLD_INFO_VUE_LIST_OPTIMIZATION_KEY,
+};

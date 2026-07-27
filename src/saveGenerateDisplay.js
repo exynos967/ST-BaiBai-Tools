@@ -1,4 +1,4 @@
-import { messageFormatting } from '../../../../script.js';
+import { messageFormatting } from '@sillytavern/script';
 
 const CLASS_ROOT = 'bai-bai-save-generate-display';
 const CLASS_VISIBLE = 'bai-bai-save-generate-display-visible';

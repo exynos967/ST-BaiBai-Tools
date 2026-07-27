@@ -1,9 +1,10 @@
 .codex-codemirror-build/
 node_modules/
 .npm-cache/
-package.json
-package-lock.json
 .agents/
 .claude/
 .codex/
 .aionrs/
+Trace-*.json
+dist/*.map
+.preview/

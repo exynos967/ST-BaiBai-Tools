@@ -2,7 +2,7 @@
 
 柏宝箱是一个 SillyTavern 第三方扩展，主要用来缓解移动端、长聊天、海量角色/正则/预设场景下的卡顿。它会在不改变 SillyTavern 原有使用方式的前提下，接管部分高开销的列表渲染、接口请求、编辑器和滚动行为。
 
-当前版本：`0.29.1`
+当前版本：`0.30.0`
 
 ## 功能总览
 
@@ -217,6 +217,35 @@ public/scripts/extensions/third-party/SillyTavern-Mobile-Resize-Guard
 ```
 
 如果要通过 SillyTavern 第三方扩展安装器安装，请把本目录内容发布到单独仓库的根目录，确保 `manifest.json` 位于仓库根目录。
+
+## 开发与构建
+
+源码位于 `src/`，运行时加载的是 Vite 构建产物 `dist/index.js`（`manifest.json` 的 `js` 字段指向 `dist/index.js?ver=版本号`，版本号由 `scripts/sync-version.mjs` 从 `package.json` 同步）。修改 `src/` 后需要重新构建才会生效：
+
+```bash
+npm install
+npm run build        # 生产构建（含 sourcemap 与压缩）
+npm run watch        # 开发监听构建
+npx eslint src       # 静态检查(no-undef 等)
+```
+
+源码目录结构：
+
+```text
+src/
+  index.js                入口：模块装配与顶层接线
+  features/               原 index.js 拆分出的功能模块(主题、自定义CSS、正则、后台生成等)
+  preset/                 预设优化(原 presetOptimizations.js 拆分,index.js 为公共出口)
+  chat/                   聊天优化(原 chatOptimizations.js 拆分)
+  worldinfo/              世界书页面优化(原 worldInfoPageOptimization.js 拆分)
+  floorDirectory.js       楼层管理器
+  saveGenerateDisplay.js  后台生成展示组件
+  settings.html           设置面板模板(构建时经 ?raw 内联)
+```
+
+宿主 SillyTavern 模块通过 `@sillytavern/*` 别名引用（如 `@sillytavern/script`、`@sillytavern/scripts/utils`），构建时解析为相对路径并保持 external，不会被打进产物。Vue、vue-draggable-next 与 CodeMirror 由 npm 依赖打包，全部内联进单个 `dist/index.js`（云端/高延迟环境下单个大文件比多个懒加载 chunk 加载更快）。
+
+发版流程：改 `package.json` 的 `version` → `npm run build`（prebuild 自动同步 `manifest.json` 并刷新 `?ver=` 缓存参数）→ 提交 `src/`、`dist/` 与 `manifest.json`。
 
 ## 兼容与回退
 

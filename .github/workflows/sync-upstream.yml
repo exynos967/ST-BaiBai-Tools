@@ -43,16 +43,24 @@ jobs:
             exit 0
           fi
 
-          if ! git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+          if ! git merge --no-commit --no-ff "upstream/${UPSTREAM_BRANCH}"; then
             mapfile -t conflicted_files < <(git diff --name-only --diff-filter=U)
 
-            if [[ ${#conflicted_files[@]} -ne 1 || ${conflicted_files[0]} != "manifest.json" ]]; then
-              printf 'Unresolved upstream conflicts:\n%s\n' "${conflicted_files[*]}" >&2
-              exit 1
-            fi
+            for conflicted_file in "${conflicted_files[@]}"; do
+              case "${conflicted_file}" in
+                manifest.json|dist/index.js)
+                  git checkout --theirs -- "${conflicted_file}"
+                  git add "${conflicted_file}"
+                  ;;
+                *)
+                  printf 'Unresolved source conflict: %s\n' "${conflicted_file}" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+          fi
 
-            git checkout --theirs -- manifest.json
-            node <<'NODE'
+          node <<'NODE'
           const fs = require('fs');
           const manifestPath = 'manifest.json';
           const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -61,8 +69,11 @@ jobs:
           manifest.auto_update = true;
           fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 4)}\n`);
           NODE
-            git add manifest.json
-            git commit --no-edit
-          fi
+
+          npm ci
+          npm run build
+          git add manifest.json dist/index.js
+          git diff --cached --check
+          git commit --no-edit
 
           git push origin "HEAD:${TARGET_BRANCH}"
