@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:preset-backup-retention": "node --experimental-vm-modules --test scripts/test-preset-backup-retention.mjs",
+    "test:generate-retry": "node --experimental-vm-modules --test scripts/test-generate-blacklist-retry.mjs",
     "sync-version": "node scripts/sync-version.mjs",
     "prebuild": "node scripts/sync-version.mjs",
     "build": "vite build --mode production",
