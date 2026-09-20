@@ -272,7 +272,7 @@ function installWorldInfoMobileHeaderLayoutStyle() {
     white-space: nowrap;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 1000px) {
     #wiTopBlock,
     #wiTopBlock > .range-block,
     #WIMultiSelector,

@@ -48,7 +48,7 @@ jobs:
 
             for conflicted_file in "${conflicted_files[@]}"; do
               case "${conflicted_file}" in
-                manifest.json|dist/index.js|package-lock.json)
+                manifest.json|dist/index.js|package.json|package-lock.json)
                   git checkout --theirs -- "${conflicted_file}"
                   git add "${conflicted_file}"
                   ;;

@@ -2,12 +2,15 @@ import { WORLD_INFO_SEARCH_REPLACE_PANEL_CLASS } from './constants.js';
 import { settings } from './state.js';
 import { getWorldInfoVueListOptimizationState } from './vueList.js';
 
+// TauriTavern uses the same 1000px mobile breakpoint as SillyTavern.
+const WORLD_INFO_MOBILE_MEDIA_QUERY = '(max-width: 1000px)';
+
 function installWorldInfoMobileHeaderLayoutWatcher(state = getWorldInfoVueListOptimizationState()) {
     if (state.mobileHeaderLayoutHandler) {
         return;
     }
 
-    const mediaQuery = globalThis.matchMedia?.('(max-width: 600px)');
+    const mediaQuery = globalThis.matchMedia?.(WORLD_INFO_MOBILE_MEDIA_QUERY);
     const handler = () => {
         const list = document.getElementById('world_popup_entries_list');
 
@@ -121,7 +124,7 @@ function removeWorldInfoMobileHeaderLayoutWatcher(state = getWorldInfoVueListOpt
 
 function shouldUseWorldInfoMobileHeaderLayout() {
     return settings.worldInfoListOptimizationEnabled
-        && Boolean(globalThis.matchMedia?.('(max-width: 600px)').matches);
+        && Boolean(globalThis.matchMedia?.(WORLD_INFO_MOBILE_MEDIA_QUERY)?.matches);
 }
 
 function applyWorldInfoMobileHeaderLayouts(root = document) {
