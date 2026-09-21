@@ -126,7 +126,7 @@ function animateWorldInfoDrawerContent(drawer, content, expand) {
     cancelWorldInfoDrawerAnimation(state);
 
     if (expand && !content.querySelector(':scope > .world_entry_edit')) {
-        $(drawer).trigger('inline-drawer-toggle');
+        drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open: true } }));
     }
 
     content.style.height = '';
@@ -170,7 +170,7 @@ function toggleWorldInfoDrawerContentImmediately(drawer, content, expand) {
     cancelWorldInfoDrawerAnimation(state);
 
     if (expand && !content.querySelector(':scope > .world_entry_edit')) {
-        $(drawer).trigger('inline-drawer-toggle');
+        drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open: true } }));
     }
 
     content.classList.remove('bai-bai-wi-drawer-motion', 'bai-bai-wi-drawer-enter', 'bai-bai-wi-drawer-open', 'bai-bai-wi-drawer-leave');
