@@ -16,6 +16,9 @@ env:
   TARGET_BRANCH: TauriTavern-branch
   UPSTREAM_REPOSITORY: baibai-git/ST-BaiBai-Tools
   UPSTREAM_BRANCH: main
+  # updateCheck.js 在分支里只改了更新源,冲突时要先回落上游再换回来。
+  UPSTREAM_MANIFEST_URL: baibai-git/SillyTavern-Mobile-Resize-Guard/main/manifest.json
+  BRANCH_MANIFEST_URL: exynos967/ST-BaiBai-Tools/TauriTavern-branch/manifest.json
 
 jobs:
   sync:
@@ -50,6 +53,18 @@ jobs:
               case "${conflicted_file}" in
                 manifest.json|dist/index.js|package.json|package-lock.json)
                   git checkout --theirs -- "${conflicted_file}"
+                  git add "${conflicted_file}"
+                  ;;
+                src/features/updateCheck.js)
+                  # 上游重构版本检测时取它的实现,再把浏览器回退读取的更新源换回
+                  # 本分支;上游若挪走这段地址,守卫失败而不是静默丢掉更新源。
+                  git checkout --theirs -- "${conflicted_file}"
+                  grep -qF "${UPSTREAM_MANIFEST_URL}" "${conflicted_file}" || {
+                    printf 'TauriTavern update source anchor missing in %s\n' "${conflicted_file}" >&2
+                    exit 1
+                  }
+                  sed -i "s#${UPSTREAM_MANIFEST_URL}#${BRANCH_MANIFEST_URL}#g" "${conflicted_file}"
+                  grep -qF "${BRANCH_MANIFEST_URL}" "${conflicted_file}"
                   git add "${conflicted_file}"
                   ;;
                 *)

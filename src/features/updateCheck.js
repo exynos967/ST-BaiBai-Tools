@@ -99,7 +99,6 @@ async function fetchBaibaokuExtensionVersion() {
 }
 
 async function fetchRemoteManifestVersion() {
-    // TauriTavern 分支:更新源指向本分支 manifest,避免把上游纯 ST 版当成可用更新。
     const remoteManifestUrl = `https://raw.githubusercontent.com/exynos967/ST-BaiBai-Tools/TauriTavern-branch/manifest.json?t=${Date.now()}`;
     const remoteManifestResponse = await fetch(remoteManifestUrl, { cache: 'no-store' });
     if (!remoteManifestResponse.ok) {
