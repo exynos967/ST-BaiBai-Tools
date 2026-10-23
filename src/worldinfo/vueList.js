@@ -2,7 +2,7 @@ import { resetScrollHeight } from '@sillytavern/scripts/utils';
 import { WORLD_INFO_VUE_LIST_OPTIMIZATION_KEY } from './constants.js';
 import { installWorldInfoEditorSelectGrouping, installWorldInfoEditorSelectSearch, removeWorldInfoEditorSelectGrouping, removeWorldInfoEditorSelectSearch } from './editorSelect.js';
 import { installWorldInfoGlobalSelectorOptimization, removeWorldInfoGlobalSelectorOptimization } from './globalSelector.js';
-import { applyWorldInfoMobileExpandedLayouts, applyWorldInfoMobileHeaderLayout, applyWorldInfoMobileHeaderLayouts, applyWorldInfoPopupLayout, installWorldInfoMobileHeaderLayoutWatcher, installWorldInfoMobileLayoutMutationObserver, removeWorldInfoMobileHeaderLayoutWatcher, removeWorldInfoMobileLayoutMutationObserver, restoreWorldInfoMobileExpandedLayouts, restoreWorldInfoMobileHeaderLayouts, restoreWorldInfoPopupLayout, shouldUseWorldInfoMobileHeaderLayout } from './mobileLayout.js';
+import { applyWorldInfoMobileExpandedLayouts, applyWorldInfoMobileHeaderLayout, applyWorldInfoMobileHeaderLayouts, applyWorldInfoPopupLayout, installWorldInfoMobileHeaderLayoutWatcher, installWorldInfoMobileLayoutMutationObserver, installWorldInfoMobilePopupLayoutRepair, removeWorldInfoMobileHeaderLayoutWatcher, removeWorldInfoMobileLayoutMutationObserver, removeWorldInfoMobilePopupLayoutRepair, restoreWorldInfoMobileExpandedLayouts, restoreWorldInfoMobileHeaderLayouts, restoreWorldInfoPopupLayout, shouldUseWorldInfoMobileHeaderLayout } from './mobileLayout.js';
 import { installWorldInfoMobileHeaderLayoutStyle, removeWorldInfoMobileHeaderLayoutStyle } from './mobileLayoutStyle.js';
 import { installWorldInfoSearchReplacePanel, removeWorldInfoSearchReplacePanel } from './searchReplace.js';
 import { LOG_PREFIX, extensionState, settings } from './state.js';
@@ -24,6 +24,7 @@ function applyWorldInfoListOptimization() {
         }
         installWorldInfoMobileHeaderLayoutWatcher(state);
         installWorldInfoMobileLayoutMutationObserver(state);
+        installWorldInfoMobilePopupLayoutRepair(state);
     } else {
         unmountWorldInfoVueListApp(state);
         restoreWorldInfoVueListPaginationPatch(state);
@@ -32,6 +33,7 @@ function applyWorldInfoListOptimization() {
         removeWorldInfoGlobalSelectorOptimization(state);
         removeWorldInfoSearchReplacePanel(state);
         removeWorldInfoMobileLayoutMutationObserver(state);
+        removeWorldInfoMobilePopupLayoutRepair(state);
         removeWorldInfoMobileHeaderLayoutWatcher(state);
         restoreWorldInfoPopupLayout();
         restoreWorldInfoMobileExpandedLayouts();
@@ -57,6 +59,11 @@ function getWorldInfoVueListOptimizationState() {
             mobileHeaderLayoutHandler: null,
             mobileHeaderLayoutMediaQuery: null,
             mobileLayoutMutationObserver: null,
+            mobilePopupLayoutRepairClickHandler: null,
+            mobilePopupLayoutRepairInstalled: false,
+            mobilePopupLayoutRepairJQueryHandler: null,
+            mobilePopupLayoutRepairObserver: null,
+            mobilePopupLayoutRepairTimer: null,
             worldInfoEditorSelectOpenHandler: null,
             worldInfoEditorSelectKeyHandler: null,
             worldInfoEditorSelectSelect2Handler: null,
@@ -84,6 +91,11 @@ function getWorldInfoVueListOptimizationState() {
     state.worldInfoSearchReplacePanel ??= null;
     state.worldInfoSearchReplaceHandlers ??= [];
     state.worldInfoSearchReplaceStats ??= null;
+    state.mobilePopupLayoutRepairClickHandler ??= null;
+    state.mobilePopupLayoutRepairInstalled ??= false;
+    state.mobilePopupLayoutRepairJQueryHandler ??= null;
+    state.mobilePopupLayoutRepairObserver ??= null;
+    state.mobilePopupLayoutRepairTimer ??= null;
 
     if (!(state.worldInfoGlobalSelectorSelects instanceof Set)) {
         state.worldInfoGlobalSelectorSelects = new Set();

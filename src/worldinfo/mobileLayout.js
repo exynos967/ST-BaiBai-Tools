@@ -229,6 +229,129 @@ function restoreWorldInfoPopupLayout() {
     delete popup.dataset.baiBaiWorldInfoPopupLayout;
 }
 
+// 宿主会在打开抽屉、恢复挂起面板或重排时重建弹窗头部或暂时摘掉条目列表,
+// 只在初始化和列表重建时套一次布局会漏掉这些时机,手机端就会偶发选择框挤在
+// 同一行。这里在头部结构可疑时补一次布局,多次触发合并成一次宏任务。
+function installWorldInfoMobilePopupLayoutRepair(state = getWorldInfoVueListOptimizationState()) {
+    if (state.mobilePopupLayoutRepairInstalled) {
+        return;
+    }
+
+    const panel = document.getElementById('WorldInfo');
+    const holder = document.getElementById('wi-holder');
+    const popup = document.getElementById('world_popup');
+
+    if (!(panel instanceof HTMLElement)
+        || !(holder instanceof HTMLElement)
+        || !(popup instanceof HTMLElement)
+        || typeof MutationObserver !== 'function') {
+        return;
+    }
+
+    const schedule = () => scheduleWorldInfoMobilePopupLayoutRepair(state);
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'attributes') {
+                if (mutation.target === panel) {
+                    schedule();
+                    return;
+                }
+
+                continue;
+            }
+
+            if (mutation.target === popup || mutation.target === holder || mutation.target === panel) {
+                schedule();
+                return;
+            }
+        }
+    });
+
+    observer.observe(panel, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true });
+
+    // ST 的打开路径既有原生点击,也有 showWorldEditor 里的 jQuery trigger,两条都接住。
+    const onDrawerToggleClick = event => {
+        if (event.target instanceof Element && event.target.closest('#WI-SP-button .drawer-toggle')) {
+            schedule();
+        }
+    };
+    const onJQueryDrawerToggleClick = () => schedule();
+
+    document.addEventListener('click', onDrawerToggleClick, true);
+    globalThis.jQuery?.(document)?.on?.('click.baiBaiWorldInfoPopupLayoutRepair', '#WI-SP-button .drawer-toggle', onJQueryDrawerToggleClick);
+
+    state.mobilePopupLayoutRepairInstalled = true;
+    state.mobilePopupLayoutRepairObserver = observer;
+    state.mobilePopupLayoutRepairClickHandler = onDrawerToggleClick;
+    state.mobilePopupLayoutRepairJQueryHandler = onJQueryDrawerToggleClick;
+
+    // 插件初始化可能早于宿主把条目列表挂回弹窗,先补一次;没条件时等后续 DOM 变化。
+    schedule();
+}
+
+function removeWorldInfoMobilePopupLayoutRepair(state = getWorldInfoVueListOptimizationState()) {
+    if (!state.mobilePopupLayoutRepairInstalled) {
+        return;
+    }
+
+    if (state.mobilePopupLayoutRepairTimer !== null) {
+        clearTimeout(state.mobilePopupLayoutRepairTimer);
+        state.mobilePopupLayoutRepairTimer = null;
+    }
+
+    state.mobilePopupLayoutRepairObserver?.disconnect();
+    state.mobilePopupLayoutRepairObserver = null;
+    document.removeEventListener('click', state.mobilePopupLayoutRepairClickHandler, true);
+    state.mobilePopupLayoutRepairClickHandler = null;
+    globalThis.jQuery?.(document)?.off?.('click.baiBaiWorldInfoPopupLayoutRepair', '#WI-SP-button .drawer-toggle', state.mobilePopupLayoutRepairJQueryHandler);
+    state.mobilePopupLayoutRepairJQueryHandler = null;
+    state.mobilePopupLayoutRepairInstalled = false;
+}
+
+function scheduleWorldInfoMobilePopupLayoutRepair(state = getWorldInfoVueListOptimizationState()) {
+    if (state.mobilePopupLayoutRepairTimer !== null && state.mobilePopupLayoutRepairTimer !== undefined) {
+        return;
+    }
+
+    state.mobilePopupLayoutRepairTimer = setTimeout(() => {
+        state.mobilePopupLayoutRepairTimer = null;
+        repairWorldInfoMobilePopupLayout();
+    }, 0);
+}
+
+function repairWorldInfoMobilePopupLayout() {
+    if (!shouldUseWorldInfoMobileHeaderLayout()) {
+        restoreWorldInfoPopupLayout();
+        return;
+    }
+
+    const popup = document.getElementById('world_popup');
+    const list = document.getElementById('world_popup_entries_list');
+
+    if (!(popup instanceof HTMLElement) || !(list instanceof HTMLElement)) {
+        return;
+    }
+
+    if (popup.dataset.baiBaiWorldInfoPopupLayout === 'true') {
+        const popupLayoutState = popup.__baiBaiWorldInfoPopupLayout;
+        const header = popupLayoutState?.header;
+
+        if (header instanceof HTMLElement && header.isConnected && header.parentElement === popup) {
+            return;
+        }
+
+        // 宿主重建了弹窗内容,旧头部已失效,清掉标记后按当前 DOM 重排一次。
+        delete popup.__baiBaiWorldInfoPopupLayout;
+        delete popup.dataset.baiBaiWorldInfoPopupLayout;
+    }
+
+    if (list.parentElement !== popup) {
+        return;
+    }
+
+    applyWorldInfoPopupLayout();
+}
+
 function applyWorldInfoPopupHeaderRows(header, sourceStash, movedNodes) {
     const select = sourceStash.querySelector('#world_editor_select');
     const createButton = sourceStash.querySelector('#world_create_button');
@@ -861,10 +984,13 @@ export {
     getWorldInfoPopupFlatHeaderNodes,
     installWorldInfoMobileHeaderLayoutWatcher,
     installWorldInfoMobileLayoutMutationObserver,
+    installWorldInfoMobilePopupLayoutRepair,
     isWorldInfoPopupFlatHeaderItem,
     moveWorldInfoPopupLayoutNode,
     removeWorldInfoMobileHeaderLayoutWatcher,
     removeWorldInfoMobileLayoutMutationObserver,
+    removeWorldInfoMobilePopupLayoutRepair,
+    repairWorldInfoMobilePopupLayout,
     restoreWorldInfoMobileContentTextareaRows,
     restoreWorldInfoMobileExpandedLayout,
     restoreWorldInfoMobileExpandedLayouts,

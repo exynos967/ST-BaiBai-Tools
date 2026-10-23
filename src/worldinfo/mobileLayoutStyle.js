@@ -465,6 +465,22 @@ function installWorldInfoMobileHeaderLayoutStyle() {
         display: none !important;
     }
 
+    /* 兜底:布局修复还没跑到或宿主重排让布局失效时,原生行也要让选择框独占一行,
+       否则创建/或/选择框/图标会挤在同一行(手机端偶发)。 */
+    #world_popup:not([data-bai-bai-world-info-popup-layout="true"]) > .flex-container {
+        align-items: center;
+        flex-wrap: wrap;
+        row-gap: 7px;
+    }
+
+    #world_popup:not([data-bai-bai-world-info-popup-layout="true"]) > .flex-container > #world_editor_select:not(.select2-hidden-accessible),
+    #world_popup:not([data-bai-bai-world-info-popup-layout="true"]) > .flex-container > .select2-container {
+        flex: 0 0 100%;
+        max-width: 100%;
+        min-width: 0;
+        width: 100% !important;
+    }
+
     #world_popup[data-bai-bai-world-info-popup-layout="true"] > .bai-bai-wi-popup-header > #world_info_pagination {
         display: flex;
         flex: 1 1 100%;
