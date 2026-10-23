@@ -3,9 +3,9 @@
     "loading_order": -1000,
     "requires": [],
     "optional": [],
-    "js": "dist/index.js?ver=1.1.4",
+    "js": "dist/index.js?ver=1.1.5",
     "author": "柏柏",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "homePage": "https://github.com/exynos967/ST-BaiBai-Tools/tree/TauriTavern-branch",
     "auto_update": true
 }
